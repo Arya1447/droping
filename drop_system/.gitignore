@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+drop_system_log.csv
+drop_system_log_actual_impact.csv
+model_parameters.pkl
+plots/
+.venv/

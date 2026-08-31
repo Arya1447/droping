@@ -1,0 +1,6 @@
+{
+  "status": "NOT_TRAINED",
+  "note": "No empirical correction model has been trained yet. Run train_model.py against a real flight-test CSV (see README.md) to populate this file. Until then, prediction.py's empirical_correction defaults to 0.0 with correction_source=NONE — physics-only prediction.",
+  "performance_requirement_m": 5.0,
+  "payload_mass_source": "CONFIGURED"
+}
