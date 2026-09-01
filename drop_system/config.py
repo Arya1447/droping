@@ -246,8 +246,11 @@ LOCAL_ORIGIN_LON: Optional[float] = None  # UNKNOWN
 # MAVLINK CONNECTION
 # ============================================================
 
-MAVLINK_CONNECTION_STRING = "udp:127.0.0.1:14551"  # CONFIGURED, matches
-# existing krti-flight-software MAVProxy bridge convention.
+MAVLINK_CONNECTION_STRING = "udp:127.0.0.1:14556"  # CONFIGURED, dedicated
+# --out port added for drop_system in krti-flight-software/find_mavlink.py's
+# OUTS list (14551 is reserved for that supervisor's own heartbeat
+# watchdog; 14552/14553/14554/14555 already belong to
+# air_speed.py/batas_koordinat.py/ground_speed.py/servo).
 MAVLINK_SOURCE_SYSTEM = 255  # CONFIGURED (ground-station-style GCS id)
 
 # Expected SERVOx_FUNCTION parameter value for each payload's release

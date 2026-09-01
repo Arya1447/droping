@@ -49,9 +49,12 @@ path (spec section 118).
   confirm the real mission sequence numbers (default: payload 1 = 6,
   per spec; payload 2 = 8 is a placeholder, confirm against the real
   mission).
-- `MAVLINK_CONNECTION_STRING` — defaults to `udp:127.0.0.1:14551`,
-  matching the existing `krti-flight-software` MAVProxy bridge
-  convention; change if different.
+- `MAVLINK_CONNECTION_STRING` — defaults to `udp:127.0.0.1:14556`, a
+  dedicated `--out` port added for this project in the sibling
+  `krti-flight-software/find_mavlink.py`'s `OUTS` list (14551 is
+  reserved for that supervisor's own heartbeat watchdog;
+  14552-14555 already belong to `air_speed.py`/`batas_koordinat.py`/
+  `ground_speed.py`/servo). Change if your setup differs.
 - `ENABLE_LIVE_RELEASE` — must be explicitly set `True` by the operator
   for LIVE mode to ever command a servo. Defaults `False`.
 - `SERVO_1_EXPECTED_FUNCTION` / `SERVO_2_EXPECTED_FUNCTION` — UNKNOWN
