@@ -333,7 +333,7 @@ matplotlib stay offline-only (spec section 118).
 python3 -m pytest tests/ -q
 ```
 
-77 tests, covering ballistic fall time, mass invariance (ballistic) and
+79 tests, covering ballistic fall time, mass invariance (ballistic) and
 mass sensitivity (drag), wind vector decomposition, coordinate
 transforms, waypoint spatial crossing + latch, telemetry freshness +
 recovery + HEALTHY/DEGRADED/CRITICAL states, target box validation,
@@ -341,7 +341,13 @@ state-machine gating, servo latch/no-duplicate/mapping, uncertainty
 estimation, Monte Carlo statistics, prediction stability, target
 elevation offset (level-terrain default, sloped-terrain correction,
 target-above-aircraft fail-closed case), GPS/EKF validity thresholds,
-geofence point-in-polygon + fail-closed-when-unconfigured, and an
-end-to-end `predict_drop_point()` integration test. All 77 currently
-pass. LIVE release is never exercised by automated tests (spec section
-126).
+geofence point-in-polygon + fail-closed-when-unconfigured, an
+end-to-end `predict_drop_point()` integration test, and
+`test_live_mode_safety.py` (the durable version of a manual real-FC
+verification — connected to the real flight controller, fetched a
+real uploaded mission, ran full LIVE-mode cycles for both payloads,
+zero servo commands sent while `ENABLE_LIVE_RELEASE=False`). All 79
+currently pass. Actual servo firing (`ENABLE_LIVE_RELEASE=True`) is
+never exercised by automated tests (spec section 126) — only the
+guarantee that it stays off by default and blocks release regardless
+of how favorable every other gate is.

@@ -188,8 +188,8 @@ MAX_PREDICTION_CHANGE_M = 1.0         # TEST default
 # target_valid=False, never silently default to (0,0).
 
 TARGET_1 = {
-    "lat": None,  # harus diisi sendiri
-    "lon": None,  # harus diisi sendiri
+    "lat": 0.0000,  # harus diisi sendiri
+    "lon": 0.0000,  # harus diisi sendiri
     # Target ground elevation, in the SAME reference frame as
     # GLOBAL_POSITION_INT.relative_alt (i.e. relative to the aircraft's
     # home/launch point, positive = higher than home). Used by
@@ -238,8 +238,8 @@ TARGET_1 = {
 }
 
 TARGET_2 = {
-    "lat": None,  # UNKNOWN - fill with real mission target 2 latitude
-    "lon": None,  # UNKNOWN - fill with real mission target 2 longitude
+    "lat": 0.0000,  # UNKNOWN - fill with real mission target 2 latitude
+    "lon": 0.0000,  # UNKNOWN - fill with real mission target 2 longitude
     "alt_m": None,  # see TARGET_1["alt_m"] comment — same semantics
     "box": {
         "north_m": 3.0,
