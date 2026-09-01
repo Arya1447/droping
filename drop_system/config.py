@@ -200,10 +200,10 @@ TARGET_1 = {
     # (e.g. GPS altitude at home minus GPS altitude at target).
     "alt_m": None,
     "box": {
-        "north_m": 5.0,  # CONFIGURED acceptance region half-extents
-        "south_m": 5.0,
-        "east_m": 5.0,
-        "west_m": 5.0,
+        "north_m": 3.0,  # CONFIGURED acceptance region half-extents
+        "south_m": 3.0,
+        "east_m": 3.0,
+        "west_m": 3.0,
     },
     "required_waypoint": 6,  # CONFIGURED, per spec section 33/156
     "servo_channel": 7,      # CONFIGURED
@@ -211,14 +211,28 @@ TARGET_1 = {
     "max_cross_track_error_m": 7.0,  # CONFIGURED flight corridor
     # Geofence for THIS payload's drop run only (payload 1 and payload 2
     # use different areas — do not share one polygon between them).
-    # UNKNOWN (None) by default -> fail-closed: geofence_valid is always
-    # False and release stays blocked until this is filled in. List of
-    # (lat, lon) vertices, same point-in-polygon convention as
+    # List of (lat, lon) vertices, same point-in-polygon convention as
     # krti-flight-software/batas_koordinat.py's AREA (that file's own
     # polygon is a single shared mission-wide fence, a different concept
     # from this per-payload drop-zone fence — don't assume they're the
     # same points).
-    "geofence": None,  # UNKNOWN
+    #
+    # !!! PLACEHOLDER / EXAMPLE ONLY !!!
+    # These four points are NOT a real survey and are NOT tied to any
+    # actual mission location — deliberately round numbers (4 decimal
+    # places) so they cannot be mistaken for real GPS survey data (which
+    # typically has 6+ decimal places, e.g. batas_koordinat.py's AREA).
+    # They exist only so geofence_valid has something non-None to
+    # evaluate while the pipeline is being developed/tested. Source =
+    # "CONFIGURED" in logs will look identical to a real fence — REPLACE
+    # these with a real surveyed/committee-provided boundary for payload
+    # 1's drop zone before any DRY_RUN/LIVE use that matters.
+    "geofence": [
+        (-6.9000, 107.6000),
+        (-6.9000, 107.6009),
+        (-6.9009, 107.6009),
+        (-6.9009, 107.6000),
+    ],
 }
 
 TARGET_2 = {
@@ -226,16 +240,27 @@ TARGET_2 = {
     "lon": None,  # UNKNOWN - fill with real mission target 2 longitude
     "alt_m": None,  # see TARGET_1["alt_m"] comment — same semantics
     "box": {
-        "north_m": 5.0,
-        "south_m": 5.0,
-        "east_m": 5.0,
-        "west_m": 5.0,
+        "north_m": 3.0,
+        "south_m": 3.0,
+        "east_m": 3.0,
+        "west_m": 3.0,
     },
     "required_waypoint": 8,  # CONFIGURED placeholder - confirm real mission seq
     "servo_channel": 8,      # CONFIGURED
     "release_pwm": 2100,     # CONFIGURED
     "max_cross_track_error_m": 10.0,
-    "geofence": None,  # UNKNOWN — see TARGET_1["geofence"] comment; payload 2's OWN drop-zone fence, different area from payload 1's
+    # !!! PLACEHOLDER / EXAMPLE ONLY !!! — see TARGET_1["geofence"]
+    # comment above; same caveats apply. Deliberately a DIFFERENT
+    # example area from payload 1's (not because of any real mission
+    # requirement — just to keep the two payloads' placeholders visibly
+    # distinct while both are still fake). Replace with payload 2's real
+    # surveyed drop-zone boundary before any use that matters.
+    "geofence": [
+        (-6.9020, 107.6020),
+        (-6.9020, 107.6029),
+        (-6.9029, 107.6029),
+        (-6.9029, 107.6020),
+    ],
 }
 
 TARGETS = {1: TARGET_1, 2: TARGET_2}
