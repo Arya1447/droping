@@ -243,8 +243,12 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
     except Exception:
         servo_mapping_valid = False
 
+    # Each payload has its own drop-zone geofence — payload 1 and
+    # payload 2 are checked against different polygons, not one shared
+    # mission-wide fence (that's a separate concept, see
+    # krti-flight-software/batas_koordinat.py).
     geofence_status = geofence.check_geofence(
-        telemetry["aircraft_lat"], telemetry["aircraft_lon"], config.GEOFENCE_POLYGON
+        telemetry["aircraft_lat"], telemetry["aircraft_lon"], runtime.target.get("geofence")
     )
 
     result = predict_drop_point(

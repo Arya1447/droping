@@ -185,15 +185,21 @@ passed, latches permanently for that `WaypointValidator` instance.
 the sibling `krti-flight-software/batas_koordinat.py` — a rectangular/
 polygonal boundary checked via point-in-polygon on raw lat/lon (plain
 Python ray-casting here, no shapely dependency, no cross-project
-import). `config.GEOFENCE_POLYGON` is `None`/UNKNOWN by default —
-**fail-closed**: with no polygon configured, `geofence_valid` is
-always `False` and release stays blocked, exactly like an unconfigured
-target. If your mission uses the same boundary as `batas_koordinat.py`'s
-`AREA` list, copy those exact `(lat, lon)` points into
-`GEOFENCE_POLYGON` — the two files are maintained independently, so
-keeping them in sync is a manual step, not automatic. Every prediction
-cycle logs `geofence_inside`/`geofence_source` and the live debug
-output shows `Geofence: INSIDE/OUTSIDE (source=...)` per payload.
+import).
+
+**Per-payload, not shared**: payload 1 and payload 2 are dropped in
+different areas, so each target carries its own fence —
+`TARGET_1["geofence"]` / `TARGET_2["geofence"]`, each a list of
+`(lat, lon)` vertices. This is a different concept from
+`batas_koordinat.py`'s single mission-wide `AREA` — don't assume the
+two are the same polygon.
+
+Both default to `None`/UNKNOWN — **fail-closed**: with no polygon
+configured for that payload, its `geofence_valid` is always `False`
+and release stays blocked, exactly like an unconfigured target. Every
+prediction cycle logs `geofence_inside`/`geofence_source` and the live
+debug output shows `Geofence: INSIDE/OUTSIDE (source=...)` per
+payload.
 
 ## 11. Dual-payload state machine
 

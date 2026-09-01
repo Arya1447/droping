@@ -25,7 +25,7 @@ UNKNOWN.
 from __future__ import annotations
 
 import dataclasses
-from typing import List, Optional, Tuple
+from typing import Optional
 
 
 # ============================================================
@@ -208,7 +208,17 @@ TARGET_1 = {
     "required_waypoint": 6,  # CONFIGURED, per spec section 33/156
     "servo_channel": 7,      # CONFIGURED
     "release_pwm": 2100,     # CONFIGURED
-    "max_cross_track_error_m": 10.0,  # CONFIGURED flight corridor
+    "max_cross_track_error_m": 7.0,  # CONFIGURED flight corridor
+    # Geofence for THIS payload's drop run only (payload 1 and payload 2
+    # use different areas — do not share one polygon between them).
+    # UNKNOWN (None) by default -> fail-closed: geofence_valid is always
+    # False and release stays blocked until this is filled in. List of
+    # (lat, lon) vertices, same point-in-polygon convention as
+    # krti-flight-software/batas_koordinat.py's AREA (that file's own
+    # polygon is a single shared mission-wide fence, a different concept
+    # from this per-payload drop-zone fence — don't assume they're the
+    # same points).
+    "geofence": None,  # UNKNOWN
 }
 
 TARGET_2 = {
@@ -225,24 +235,10 @@ TARGET_2 = {
     "servo_channel": 8,      # CONFIGURED
     "release_pwm": 2100,     # CONFIGURED
     "max_cross_track_error_m": 10.0,
+    "geofence": None,  # UNKNOWN — see TARGET_1["geofence"] comment; payload 2's OWN drop-zone fence, different area from payload 1's
 }
 
 TARGETS = {1: TARGET_1, 2: TARGET_2}
-
-
-# ============================================================
-# GEOFENCE
-# ============================================================
-#
-# Independent of, but same convention as, krti-flight-software's
-# batas_koordinat.py AREA list (rectangular/polygonal boundary,
-# point-in-polygon on raw lat/lon). UNKNOWN (None) until the operator
-# fills it in — a fail-closed default (see geofence.py:
-# check_geofence()), since "no fence configured" must never be
-# silently read as "release anywhere is fine". If your mission uses
-# the same boundary as batas_koordinat.py's AREA, copy those exact
-# (lat, lon) points here; the two files are maintained independently.
-GEOFENCE_POLYGON: Optional[List[Tuple[float, float]]] = None  # UNKNOWN
 
 
 # ============================================================
