@@ -230,10 +230,10 @@ TARGET_1 = {
     # Order convention: utara kiri -> utara kanan -> selatan kanan ->
     # selatan kiri (same clockwise order as batas_koordinat.py's AREA).
     "geofence": [
-        (-6.9000, 107.6000),  # utara kiri
-        (-6.9000, 107.6009),  # utara kanan
-        (-6.9009, 107.6009),  # selatan kanan
-        (-6.9009, 107.6000),  # selatan kiri
+        (-6.9000, 107.6000),  # utara kiri    lat, lon
+        (-6.9000, 107.6009),  # utara kanan   lat, lon
+        (-6.9009, 107.6009),  # selatan kanan lat, lon
+        (-6.9009, 107.6000),  # selatan kiri  lat, lon
     ],
 }
 
@@ -260,10 +260,10 @@ TARGET_2 = {
     # Order convention: utara kiri -> utara kanan -> selatan kanan ->
     # selatan kiri (same clockwise order as batas_koordinat.py's AREA).
     "geofence": [
-        (-6.9020, 107.6020),  # utara kiri
-        (-6.9020, 107.6029),  # utara kanan
-        (-6.9029, 107.6029),  # selatan kanan
-        (-6.9029, 107.6020),  # selatan kiri
+        (-6.9020, 107.6020),  # utara kiri    lat, lon
+        (-6.9020, 107.6029),  # utara kanan   lat, lon
+        (-6.9029, 107.6029),  # selatan kanan lat, lon
+        (-6.9029, 107.6020),  # selatan kiri  lat, lon
     ],
 }
 
