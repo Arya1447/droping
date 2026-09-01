@@ -227,11 +227,13 @@ TARGET_1 = {
     # "CONFIGURED" in logs will look identical to a real fence — REPLACE
     # these with a real surveyed/committee-provided boundary for payload
     # 1's drop zone before any DRY_RUN/LIVE use that matters.
+    # Order convention: utara kiri -> utara kanan -> selatan kanan ->
+    # selatan kiri (same clockwise order as batas_koordinat.py's AREA).
     "geofence": [
-        (-6.9000, 107.6000),
-        (-6.9000, 107.6009),
-        (-6.9009, 107.6009),
-        (-6.9009, 107.6000),
+        (-6.9000, 107.6000),  # utara kiri
+        (-6.9000, 107.6009),  # utara kanan
+        (-6.9009, 107.6009),  # selatan kanan
+        (-6.9009, 107.6000),  # selatan kiri
     ],
 }
 
@@ -255,11 +257,13 @@ TARGET_2 = {
     # requirement — just to keep the two payloads' placeholders visibly
     # distinct while both are still fake). Replace with payload 2's real
     # surveyed drop-zone boundary before any use that matters.
+    # Order convention: utara kiri -> utara kanan -> selatan kanan ->
+    # selatan kiri (same clockwise order as batas_koordinat.py's AREA).
     "geofence": [
-        (-6.9020, 107.6020),
-        (-6.9020, 107.6029),
-        (-6.9029, 107.6029),
-        (-6.9029, 107.6020),
+        (-6.9020, 107.6020),  # utara kiri
+        (-6.9020, 107.6029),  # utara kanan
+        (-6.9029, 107.6029),  # selatan kanan
+        (-6.9029, 107.6020),  # selatan kiri
     ],
 }
 
