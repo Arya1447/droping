@@ -54,6 +54,12 @@ path (spec section 118).
   convention; change if different.
 - `ENABLE_LIVE_RELEASE` — must be explicitly set `True` by the operator
   for LIVE mode to ever command a servo. Defaults `False`.
+- `SERVO_1_EXPECTED_FUNCTION` / `SERVO_2_EXPECTED_FUNCTION` — UNKNOWN
+  (`None`) by default. `main.py` reads the real `SERVOx_FUNCTION`
+  parameter from the connected flight controller and compares it
+  against this value before trusting the servo mapping; leave `None`
+  and release stays blocked until you check your vehicle's actual
+  params and fill in the real function ID.
 - Drag model (`DRAG_ENABLED`, `DRAG_CD`, `DRAG_REFERENCE_AREA_M2`,
   payload geometry) — all `None`/disabled. Cd/reference area are
   genuinely UNKNOWN without wind-tunnel/CFD/measured data; do not fill
@@ -198,11 +204,27 @@ python3 main.py --mode DRY_RUN      # real MAVLink telemetry, servo transport di
 python3 main.py --mode LIVE         # real servo commands (also requires config.ENABLE_LIVE_RELEASE=True)
 ```
 
-Default mode is `DRY_RUN`. The `LIVE` telemetry-ingestion wiring
-(mapping polled MAVLink messages into the prediction pipeline's input
-dict) is scaffolded in `mavlink_interface.py`/`main.py` but the actual
-message-to-field wiring against your specific flight controller stream
-is left as an integration step — not fabricated here.
+Default mode is `DRY_RUN`. In `DRY_RUN`/`LIVE`, every cycle pulls fresh
+data straight from MAVLink (`main.py::_live_telemetry`) — no hardcoded
+telemetry constants in that path:
+
+| Field | Source message.field | Notes |
+|---|---|---|
+| lat/lon/altitude/velocity N,E,U | `GLOBAL_POSITION_INT` | altitude via `relative_alt/1000` |
+| heading | `GLOBAL_POSITION_INT.hdg` (falls back to `VFR_HUD.heading`) | `hdg==65535` treated as unknown per MAVLink spec |
+| airspeed | `VFR_HUD.airspeed` | |
+| wind | `WIND.speed`/`.direction` if streamed; else vector-estimated from `Vground - Vair` under an explicit ASSUMED-zero-sideslip label (`wind_source="ESTIMATED_ZERO_SIDESLIP_ASSUMED"`) | never silently falls back |
+| GPS validity | `GPS_RAW_INT.fix_type >= 3` | MAVLink common.xml `GPS_FIX_TYPE` enum |
+| EKF validity | `EKF_STATUS_REPORT.flags` (attitude+velocity+position bits set, not in const-pos-mode) | MAVLink common.xml `EKF_STATUS_FLAGS` |
+| waypoint positions | `MISSION_ITEM_INT`, fetched once at startup via `MAVLinkInterface.fetch_mission_items()` | not re-fetched every cycle (spec section 117) |
+| servo mapping | `SERVOx_FUNCTION` param, compared against `config.SERVO_1_EXPECTED_FUNCTION`/`SERVO_2_EXPECTED_FUNCTION` | **both `None`/UNKNOWN by default — you must fill these in** after checking your vehicle's real params, or servo release stays blocked |
+
+`config.LOCAL_ORIGIN_LAT`/`LON` **must** be set (not `None`) to run
+`DRY_RUN`/`LIVE` — `main()` refuses to start otherwise, since local
+geometry needs one fixed origin across cycles, not a rolling
+"current position" one. `MAVLinkInterface.connect()` now fails loudly
+(`MAVLinkUnavailableError`) if no HEARTBEAT arrives within the connect
+timeout, rather than silently proceeding with `target_system=0`.
 
 ## 14. Safety
 
@@ -235,14 +257,14 @@ matplotlib stay offline-only (spec section 118).
 python3 -m pytest tests/ -q
 ```
 
-64 tests, covering ballistic fall time, mass invariance (ballistic) and
+67 tests, covering ballistic fall time, mass invariance (ballistic) and
 mass sensitivity (drag), wind vector decomposition, coordinate
 transforms, waypoint spatial crossing + latch, telemetry freshness +
 recovery + HEALTHY/DEGRADED/CRITICAL states, target box validation,
 state-machine gating, servo latch/no-duplicate/mapping, uncertainty
 estimation, Monte Carlo statistics, prediction stability, target
 elevation offset (level-terrain default, sloped-terrain correction,
-target-above-aircraft fail-closed case), and an end-to-end
-`predict_drop_point()` integration test. All 64 currently pass. LIVE
-release is never exercised by automated tests (spec section
-126).
+target-above-aircraft fail-closed case), GPS/EKF validity thresholds,
+and an end-to-end `predict_drop_point()` integration test. All 67
+currently pass. LIVE release is never exercised by automated tests
+(spec section 126).

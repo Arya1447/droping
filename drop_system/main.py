@@ -21,18 +21,24 @@ from __future__ import annotations
 import argparse
 import math
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import config
-from coordinate_utils import ground_track_from_velocity
+from coordinate_utils import ground_track_from_velocity, horizontal_to_ne, latlon_to_local
 from filters import CircularEMAFilter, EMAFilter
 from logger import DropSystemLogger
-from mavlink_interface import MAVLinkInterface, MAVLinkUnavailableError
+from mavlink_interface import (
+    MAVLinkInterface, MAVLinkUnavailableError,
+    ekf_valid_from_flags, gps_valid_from_fix_type,
+)
 from prediction import PredictionStabilityTracker, predict_drop_point
 from servo_controller import FakeServoController, MAVLinkServoController, ServoFault
-from state_machine import PayloadStateMachine
+from state_machine import GateInputs, PayloadStateMachine
 from telemetry_health import TelemetryHealth
 from waypoint_validator import WaypointValidator
+from wind_model import estimate_wind_vector, wind_speed_direction_from_vector
+
+GPS_HDG_UNKNOWN = 65535  # MAVLink common.xml: GLOBAL_POSITION_INT.hdg sentinel for "unknown"
 
 
 class PayloadRuntime:
@@ -49,6 +55,12 @@ class PayloadRuntime:
         self.waypoint_validator = WaypointValidator(required_waypoint_seq=target["required_waypoint"])
         self.stability_tracker = PredictionStabilityTracker()
         self.state_machine = PayloadStateMachine(payload_id=payload_id)
+        # Local (N, E) position of the waypoint immediately before, and
+        # of, this payload's required waypoint — resolved once at
+        # startup from the real onboard mission (see
+        # _resolve_waypoint_positions), not re-fetched every cycle.
+        self.waypoint_prev_local: Optional[Tuple[float, float]] = None
+        self.waypoint_current_local: Optional[Tuple[float, float]] = None
 
 
 def _synthetic_telemetry(t: float) -> Dict:
@@ -73,12 +85,140 @@ def _synthetic_telemetry(t: float) -> Dict:
         "gps_valid": True,
         "ekf_valid": True,
         "heartbeat_valid": True,
+        "ground_speed_valid": True,
     }
+
+
+def _resolve_waypoint_positions(runtimes: Dict[int, "PayloadRuntime"],
+                                 mission_items: Dict[int, Tuple[float, float]],
+                                 origin_lat: float, origin_lon: float) -> None:
+    """Convert each payload's required-waypoint and previous-waypoint
+    lat/lon (from the real onboard mission) into local (N, E), once.
+    Missing entries stay None — waypoint_validator.py already handles a
+    None waypoint position by simply not evaluating spatial crossing
+    that cycle rather than crashing or guessing.
+    """
+    for runtime in runtimes.values():
+        req = runtime.target["required_waypoint"]
+        prev_ll = mission_items.get(req - 1)
+        curr_ll = mission_items.get(req)
+        runtime.waypoint_prev_local = (
+            latlon_to_local(prev_ll[0], prev_ll[1], origin_lat, origin_lon) if prev_ll else None
+        )
+        runtime.waypoint_current_local = (
+            latlon_to_local(curr_ll[0], curr_ll[1], origin_lat, origin_lon) if curr_ll else None
+        )
+        if runtime.waypoint_prev_local is None or runtime.waypoint_current_local is None:
+            print(f"WARNING: payload {runtime.payload_id} required_waypoint={req} "
+                  f"not found in the fetched mission (have items {sorted(mission_items)}) — "
+                  "spatial waypoint-passed check will stay False until this is fixed "
+                  "(config.py required_waypoint vs. the uploaded mission likely disagree).")
+
+
+def _live_telemetry(mavlink: MAVLinkInterface, health: TelemetryHealth, now: float) -> Dict:
+    """Build one cycle's telemetry dict entirely from the latest received
+    MAVLink messages (spec sections 145-165: LIVE altitude/velocity/
+    heading/wind/waypoint state must come from real telemetry, never a
+    hardcoded constant). Any field whose source message hasn't arrived
+    yet is simply absent from the dict — run_cycle()/predict_drop_point()
+    already default missing telemetry to fail-closed (False/None), never
+    to a fabricated number.
+    """
+    telemetry: Dict = {}
+
+    gpos = mavlink.get_latest("GLOBAL_POSITION_INT")
+    if gpos is not None:
+        m = gpos.msg
+        health.touch("gps", True, now=gpos.timestamp)
+        health.touch("altitude", True, now=gpos.timestamp)
+        health.touch("ground_speed", True, now=gpos.timestamp)
+        telemetry["aircraft_lat"] = m.lat / 1e7
+        telemetry["aircraft_lon"] = m.lon / 1e7
+        telemetry["altitude_m"] = m.relative_alt / 1000.0
+        telemetry["altitude_source"] = "GLOBAL_POSITION_INT.relative_alt"
+        telemetry["ground_velocity_n"] = m.vx / 100.0
+        telemetry["ground_velocity_e"] = m.vy / 100.0
+        telemetry["ground_velocity_u"] = -m.vz / 100.0  # MAVLink vz is down-positive
+        if m.hdg != GPS_HDG_UNKNOWN:
+            telemetry["heading_deg"] = m.hdg / 100.0
+
+    vfr = mavlink.get_latest("VFR_HUD")
+    if vfr is not None:
+        health.touch("airspeed", True, now=vfr.timestamp)
+        telemetry["air_speed_mps"] = vfr.msg.airspeed
+        telemetry.setdefault("heading_deg", vfr.msg.heading)
+        health.touch("heading", True, now=vfr.timestamp)
+
+    wind = mavlink.get_latest("WIND")
+    if wind is not None:
+        health.touch("wind", True, now=wind.timestamp)
+        telemetry["wind_speed_mps"] = wind.msg.speed
+        telemetry["wind_direction_from_deg"] = wind.msg.direction
+        telemetry["wind_source"] = "MAVLINK_WIND_ESTIMATE"
+        telemetry["wind_quality"] = "OK"
+    elif "air_speed_mps" in telemetry and "heading_deg" in telemetry and "ground_velocity_n" in telemetry:
+        # No direct WIND message — fall back to the vector estimator,
+        # which requires an air-relative direction. Heading is used as
+        # that direction under an explicit ASSUMED-zero-sideslip
+        # approximation (spec section 151: never silently assume this;
+        # here it is labeled, not hidden).
+        air_n, air_e = horizontal_to_ne(telemetry["air_speed_mps"], telemetry["heading_deg"])
+        wind_vec = estimate_wind_vector(
+            telemetry["ground_velocity_n"], telemetry["ground_velocity_e"], 0.0, air_n, air_e, 0.0
+        )
+        if wind_vec is not None:
+            speed, direction = wind_speed_direction_from_vector(wind_vec[0], wind_vec[1])
+            telemetry["wind_speed_mps"] = speed
+            telemetry["wind_direction_from_deg"] = direction
+            telemetry["wind_source"] = "ESTIMATED_ZERO_SIDESLIP_ASSUMED"
+            telemetry["wind_quality"] = "DEGRADED"
+    if "wind_source" not in telemetry:
+        telemetry["wind_source"] = "UNAVAILABLE"
+        telemetry["wind_quality"] = "UNKNOWN"
+
+    mission_current = mavlink.get_latest("MISSION_CURRENT")
+    if mission_current is not None:
+        health.touch("mission", True, now=mission_current.timestamp)
+        telemetry["mission_seq"] = mission_current.msg.seq
+    else:
+        telemetry["mission_seq"] = 0
+
+    gps_raw = mavlink.get_latest("GPS_RAW_INT")
+    telemetry["gps_valid"] = gps_valid_from_fix_type(gps_raw.msg.fix_type if gps_raw else None)
+
+    ekf = mavlink.get_latest("EKF_STATUS_REPORT")
+    telemetry["ekf_valid"] = ekf_valid_from_flags(ekf.msg.flags if ekf else None)
+
+    heartbeat = mavlink.get_latest("HEARTBEAT")
+    if heartbeat is not None:
+        health.touch("heartbeat", True, now=heartbeat.timestamp)
+
+    servo_feedback = mavlink.get_latest("SERVO_OUTPUT_RAW")
+    if servo_feedback is not None:
+        health.touch("servo_feedback", True, now=servo_feedback.timestamp)
+
+    health_report = health.evaluate(now=now)
+    telemetry["telemetry_health"] = health_report.state
+    telemetry["altitude_valid"] = "altitude" not in health_report.critical_stale
+    telemetry["airspeed_valid"] = "airspeed" not in health_report.critical_stale
+    telemetry["ground_speed_valid"] = "ground_speed" not in health_report.critical_stale
+    telemetry["heartbeat_valid"] = "heartbeat" not in health_report.critical_stale
+
+    return telemetry
 
 
 def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
               servo: "FakeServoController | MAVLinkServoController",
-              logger: DropSystemLogger, empirical_correction_fn=None) -> None:
+              logger: DropSystemLogger, empirical_correction_fn=None) -> bool:
+    """Returns True if a cycle was actually run, False if it was skipped
+    because the aircraft's own position/altitude hasn't arrived over
+    MAVLink yet this run (LIVE/DRY_RUN only — SIMULATION always has it).
+    """
+    if "aircraft_lat" not in telemetry or "altitude_m" not in telemetry:
+        print(f"PAYLOAD {runtime.payload_id}: waiting for first GLOBAL_POSITION_INT "
+              "from the flight controller — no aircraft position/altitude yet.")
+        return False
+
     origin_lat = config.LOCAL_ORIGIN_LAT if config.LOCAL_ORIGIN_LAT is not None else telemetry["aircraft_lat"]
     origin_lon = config.LOCAL_ORIGIN_LON if config.LOCAL_ORIGIN_LON is not None else telemetry["aircraft_lon"]
 
@@ -88,13 +228,12 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
     ground_track = ground_track_from_velocity(telemetry["ground_velocity_n"], telemetry["ground_velocity_e"])
     runtime.heading_filter.update(telemetry.get("heading_deg", ground_track))
 
-    from coordinate_utils import latlon_to_local
     aircraft_local = latlon_to_local(telemetry["aircraft_lat"], telemetry["aircraft_lon"], origin_lat, origin_lon)
     waypoint_passed = runtime.waypoint_validator.update(
         mission_seq=telemetry.get("mission_seq", 0),
         current_position=aircraft_local,
-        waypoint_prev_position=telemetry.get("waypoint_prev_position"),
-        waypoint_current_position=telemetry.get("waypoint_current_position"),
+        waypoint_prev_position=runtime.waypoint_prev_local,
+        waypoint_current_position=runtime.waypoint_current_local,
     )
 
     servo_mapping_valid = False
@@ -122,7 +261,7 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
         servo_delay_s=config.SERVO_DELAY_S_TEST,
         waypoint_passed=waypoint_passed,
         gps_valid=telemetry.get("gps_valid", False), ekf_valid=telemetry.get("ekf_valid", False),
-        ground_speed_valid=telemetry.get("gps_valid", False), airspeed_valid=telemetry.get("airspeed_valid", True),
+        ground_speed_valid=telemetry.get("ground_speed_valid", False), airspeed_valid=telemetry.get("airspeed_valid", True),
         heartbeat_valid=telemetry.get("heartbeat_valid", False),
         telemetry_health=telemetry.get("telemetry_health", "CRITICAL"),
         servo_mapping_valid=servo_mapping_valid,
@@ -136,16 +275,22 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
         altitude_sigma_m=config.TEST_UNCERTAINTY.altitude_sigma_m,
     )
 
-    from state_machine import GateInputs
+    # Mirrors the same "is the prediction itself well-formed" check
+    # predict_drop_point() applies internally (target valid + release
+    # distance finite + altitude valid) — NOT the same thing as
+    # result.release_allowed, which already folds in every gate
+    # including this one and would make this circular.
+    prediction_valid = result.target_valid and math.isfinite(result.final_release_distance_m) and result.altitude_valid
+
     gates = GateInputs(
         gps_valid=telemetry.get("gps_valid", False), altitude_valid=result.altitude_valid,
-        ground_speed_valid=telemetry.get("gps_valid", False), airspeed_valid=telemetry.get("airspeed_valid", True),
+        ground_speed_valid=telemetry.get("ground_speed_valid", False), airspeed_valid=telemetry.get("airspeed_valid", True),
         heartbeat_valid=telemetry.get("heartbeat_valid", False), ekf_valid=telemetry.get("ekf_valid", False),
         target_valid=result.target_valid, target_box_valid=result.target_box_valid,
         waypoint_passed=waypoint_passed,
         corridor_valid=abs(result.aircraft_cross_track_error_m) <= runtime.target["max_cross_track_error_m"],
         target_ahead=result.target_distance_m > 0,
-        prediction_valid=result.release_allowed or True,
+        prediction_valid=prediction_valid,
         predicted_impact_inside_box=result.predicted_impact_inside_box,
         release_distance_valid=math.isfinite(result.final_release_distance_m),
         release_window_valid=result.target_distance_m > 0,
@@ -190,6 +335,23 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
     else:
         print("RELEASE: READY" if mode != "LIVE" else "RELEASE: COMMANDED")
 
+    return True
+
+
+def _make_mapping_check(mavlink: MAVLinkInterface, expected_function: Optional[int]):
+    """SERVOx_FUNCTION mapping check backed by a REAL flight-controller
+    parameter read. Returns False (mapping unconfirmed -> release
+    blocked) whenever the expected function is UNKNOWN
+    (config.SERVO_*_EXPECTED_FUNCTION is None) or the param hasn't
+    arrived yet — never assumes a channel is correctly wired.
+    """
+    def check(channel: int) -> bool:
+        if expected_function is None:
+            return False
+        actual = mavlink.get_servo_function_param(channel)
+        return actual is not None and actual == expected_function
+    return check
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -200,8 +362,15 @@ def main() -> int:
     print(f"Starting drop_system in {args.mode} mode "
           f"(ENABLE_LIVE_RELEASE={config.ENABLE_LIVE_RELEASE})")
 
+    if args.mode != "SIMULATION" and (config.LOCAL_ORIGIN_LAT is None or config.LOCAL_ORIGIN_LON is None):
+        print("config.LOCAL_ORIGIN_LAT/LON must be set for DRY_RUN/LIVE mode — local "
+              "geometry needs a fixed origin, not a rolling 'current position' one. "
+              "Set it to your home/launch point coordinates before running this mode.")
+        return 1
+
     runtimes = {pid: PayloadRuntime(pid, target) for pid, target in config.TARGETS.items()}
     logger = DropSystemLogger(config.LOG_CSV_PATH)
+    telemetry_health = TelemetryHealth()
 
     if args.mode == "SIMULATION":
         servo = FakeServoController(mapping_valid_channels={t["servo_channel"] for t in config.TARGETS.values()})
@@ -213,8 +382,29 @@ def main() -> int:
         except MAVLinkUnavailableError as exc:
             print(f"MAVLink unavailable: {exc}")
             return 1
-        mapping_check = lambda ch: False  # UNKNOWN until real SERVOx_FUNCTION params confirmed
-        servo = MAVLinkServoController(mavlink.connection, mapping_check=mapping_check)
+
+        print("Fetching mission items from the flight controller...")
+        try:
+            mission_items = mavlink.fetch_mission_items()
+            print(f"Fetched {len(mission_items)} mission items: {sorted(mission_items)}")
+        except MAVLinkUnavailableError as exc:
+            print(f"WARNING: could not fetch mission items ({exc}); "
+                  "waypoint-passed will stay False until this is retried.")
+            mission_items = {}
+        _resolve_waypoint_positions(runtimes, mission_items, config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON)
+
+        # Each payload's expected SERVOx_FUNCTION is configured
+        # independently in config.py (default UNKNOWN -> mapping stays
+        # invalid -> release blocked, per spec section 45/158).
+        expected_by_channel = {
+            t["servo_channel"]: (config.SERVO_1_EXPECTED_FUNCTION if pid == 1 else config.SERVO_2_EXPECTED_FUNCTION)
+            for pid, t in config.TARGETS.items()
+        }
+
+        def combined_mapping_check(channel: int) -> bool:
+            return _make_mapping_check(mavlink, expected_by_channel.get(channel))(channel)
+
+        servo = MAVLinkServoController(mavlink.connection, mapping_check=combined_mapping_check)
 
     period_s = 1.0 / config.PREDICTION_CYCLE_HZ
     cycle = 0
@@ -225,12 +415,14 @@ def main() -> int:
             if args.mode == "SIMULATION":
                 telemetry = _synthetic_telemetry(t0)
             else:
-                mavlink.poll(blocking=False)
-                print("LIVE telemetry ingestion from MAVLinkInterface is scaffolded "
-                      "(mavlink_interface.py) but wiring GLOBAL_POSITION_INT/VFR_HUD/WIND "
-                      "messages into the `telemetry` dict here is left for integration "
-                      "against the real flight controller — not fabricated.")
-                break
+                # Drain whatever's arrived on the MAVLink socket for
+                # this cycle's time budget so _live_telemetry() sees
+                # the freshest available messages, not just one.
+                deadline = t0 + period_s
+                while time.monotonic() < deadline:
+                    if mavlink.poll(blocking=False) is None:
+                        time.sleep(0.005)
+                telemetry = _live_telemetry(mavlink, telemetry_health, now=time.monotonic())
 
             for pid, runtime in runtimes.items():
                 run_cycle(runtime, telemetry, args.mode, servo, logger)

@@ -188,8 +188,8 @@ MAX_PREDICTION_CHANGE_M = 1.0         # TEST default
 # target_valid=False, never silently default to (0,0).
 
 TARGET_1 = {
-    "lat": None,  # UNKNOWN - fill with real mission target 1 latitude
-    "lon": None,  # UNKNOWN - fill with real mission target 1 longitude
+    "lat": None,  # harus diisi sendiri
+    "lon": None,  # harus diisi sendiri
     # Target ground elevation, in the SAME reference frame as
     # GLOBAL_POSITION_INT.relative_alt (i.e. relative to the aircraft's
     # home/launch point, positive = higher than home). Used by
@@ -249,6 +249,21 @@ LOCAL_ORIGIN_LON: Optional[float] = None  # UNKNOWN
 MAVLINK_CONNECTION_STRING = "udp:127.0.0.1:14551"  # CONFIGURED, matches
 # existing krti-flight-software MAVProxy bridge convention.
 MAVLINK_SOURCE_SYSTEM = 255  # CONFIGURED (ground-station-style GCS id)
+
+# Expected SERVOx_FUNCTION parameter value for each payload's release
+# channel — this is what main.py compares the REAL flight-controller
+# param against before trusting the mapping (spec section 45/158: never
+# assume Servo N == output N). UNKNOWN until you check the actual
+# vehicle's params (e.g. via Mission Planner/QGC parameter list, or
+# `mavlink.get_servo_function_param(7)` after connecting) and confirm
+# what SERVO7_FUNCTION/SERVO8_FUNCTION are actually set to (commonly a
+# Relay or Script/RCIN passthrough function for a payload-release
+# mechanism — ArduPilot has no single dedicated "payload release"
+# SERVO_FUNCTION enum value, so this genuinely depends on your specific
+# gripper/servo wiring). Leaving these None keeps servo_mapping_valid
+# False (release blocked) until you fill in the real number.
+SERVO_1_EXPECTED_FUNCTION: Optional[int] = None  # UNKNOWN
+SERVO_2_EXPECTED_FUNCTION: Optional[int] = None  # UNKNOWN
 
 
 # ============================================================
