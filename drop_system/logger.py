@@ -23,6 +23,7 @@ CYCLE_LOG_FIELDS = [
     "timestamp", "payload_id",
     "telemetry_health",
     "altitude_raw_m", "altitude_filtered_m", "altitude_source", "altitude_valid",
+    "target_altitude_offset_m", "target_altitude_source", "effective_drop_height_m",
     "ground_speed_mps", "ground_track_deg", "air_speed_mps", "heading_deg", "flight_path_angle_deg",
     "wind_speed_mps", "wind_direction_from_deg", "wind_source", "wind_quality",
     "payload_mass_kg", "payload_mass_gram", "mass_source", "mass_uncertainty_kg",

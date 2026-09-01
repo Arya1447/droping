@@ -166,6 +166,9 @@ class PredictionResult:
     altitude_filtered_m: float
     altitude_source: str
     altitude_valid: bool
+    target_altitude_offset_m: float
+    target_altitude_source: str  # CONFIGURED (target["alt_m"] set) / ASSUMED_LEVEL_TERRAIN
+    effective_drop_height_m: float  # altitude_filtered_m - target_altitude_offset_m
 
     ground_speed_mps: float
     ground_track_deg: float
@@ -370,16 +373,53 @@ def predict_drop_point(
     if wind_speed_mps is not None and wind_direction_from_deg is not None and not math.isnan(wind_direction_from_deg):
         wind_n, wind_e = wind_model.wind_vector_from_speed_direction(wind_speed_mps, wind_direction_from_deg)
 
+    # --- target elevation offset ---
+    # relative_alt (and therefore altitude_filtered_m) is height above the
+    # AIRCRAFT'S home/launch point, not height above the target. If the
+    # target sits at a different ground elevation than home (sloped
+    # terrain), the ballistic drop height must be adjusted, or every
+    # time-of-flight/drop-distance computation silently assumes flat
+    # terrain. target["alt_m"] carries that elevation in the SAME
+    # reference frame as relative_alt (positive = higher than home).
+    target_alt_m = target.get("alt_m")
+    if target_alt_m is None:
+        target_altitude_offset_m = 0.0
+        target_altitude_source = "ASSUMED_LEVEL_TERRAIN"
+    else:
+        target_altitude_offset_m = float(target_alt_m)
+        target_altitude_source = "CONFIGURED"
+
+    effective_drop_height_m = altitude_filtered_m - target_altitude_offset_m
+    elevation_valid = effective_drop_height_m >= 0.0
+
     # --- physics core ---
     core_inputs = PhysicsCoreInputs(
         payload_mass_kg=payload_mass_kg,
-        altitude_m=altitude_filtered_m,
+        altitude_m=effective_drop_height_m,
         ground_velocity_n=v_n, ground_velocity_e=v_e, ground_velocity_u=v_u,
         servo_delay_s=servo_delay_s,
         drag_enabled=drag_enabled, cd=cd, area_m2=area_m2, rho=rho,
         wind_n=wind_n, wind_e=wind_e, wind_u=wind_u,
     )
-    core = compute_physics_core(core_inputs)
+    if elevation_valid:
+        core = compute_physics_core(core_inputs)
+    else:
+        # Target elevation is at or above the aircraft's current altitude
+        # — no physical ballistic solution exists. Do not call
+        # compute_physics_core (it would raise ValueError); report a
+        # degenerate, clearly-invalid result instead of crashing or
+        # guessing a number.
+        servo_n = v_n * servo_delay_s
+        servo_e = v_e * servo_delay_s
+        core = PhysicsCoreResult(
+            t_flight_s=float("nan"), drop_distance_m=float("nan"),
+            drop_north_m=float("nan"), drop_east_m=float("nan"),
+            servo_displacement_m=math.hypot(servo_n, servo_e),
+            servo_north_m=servo_n, servo_east_m=servo_e,
+            gravity_force_n=physics_model.gravity_force_n(payload_mass_kg, config.GRAVITY_MPS2),
+            gravity_acceleration_mps2=physics_model.gravity_acceleration(config.GRAVITY_MPS2),
+            drag_force_n=None, drag_acceleration_mps2=None, ballistic_coefficient_kgm2=None,
+        )
 
     # --- geometry: aircraft/target in local NEU ---
     aircraft_n, aircraft_e = latlon_to_local(aircraft_lat, aircraft_lon, origin_lat, origin_lon)
@@ -459,7 +499,7 @@ def predict_drop_point(
         core_inputs, ground_speed_sigma_mps, heading_sigma_deg, altitude_sigma_m, ground_track
     )
 
-    prediction_valid = t_valid and math.isfinite(final_release_distance) and altitude_valid
+    prediction_valid = t_valid and math.isfinite(final_release_distance) and altitude_valid and elevation_valid
 
     gates = GateInputs(
         gps_valid=gps_valid,
@@ -483,6 +523,8 @@ def predict_drop_point(
         live_release_enabled=live_release_enabled,
     )
     block_reasons = evaluate_gates(gates, already_released)
+    if not elevation_valid:
+        block_reasons = ["TARGET_ELEVATION_ABOVE_AIRCRAFT"] + block_reasons
     release_allowed = len(block_reasons) == 0
 
     if telemetry_health != "HEALTHY":
@@ -505,6 +547,9 @@ def predict_drop_point(
         altitude_filtered_m=altitude_filtered_m,
         altitude_source=altitude_source,
         altitude_valid=altitude_valid,
+        target_altitude_offset_m=target_altitude_offset_m,
+        target_altitude_source=target_altitude_source,
+        effective_drop_height_m=effective_drop_height_m,
 
         ground_speed_mps=ground_speed,
         ground_track_deg=ground_track,

@@ -70,3 +70,54 @@ def test_predict_drop_point_invalid_target():
     )
     assert result.target_valid is False
     assert "TARGET_INVALID" in result.release_block_reason
+
+
+def test_target_altitude_offset_defaults_to_level_terrain():
+    target = _base_target()  # alt_m=None
+    result = predict_drop_point(
+        payload_id=1, payload_mass_kg=0.5, mass_source="CONFIGURED", mass_uncertainty_kg=0.005,
+        aircraft_lat=-6.9, aircraft_lon=107.6, origin_lat=-6.9, origin_lon=107.6,
+        target=target,
+        altitude_raw_m=100.0, altitude_filtered_m=100.0, altitude_source="TEST", altitude_valid=True,
+        ground_velocity_n=18.0, ground_velocity_e=0.0, ground_velocity_u=0.0,
+        servo_delay_s=0.3,
+    )
+    assert result.target_altitude_source == "ASSUMED_LEVEL_TERRAIN"
+    assert result.target_altitude_offset_m == 0.0
+    assert result.effective_drop_height_m == 100.0
+
+
+def test_target_altitude_offset_reduces_effective_drop_height():
+    """Target sitting 20 m higher than home -> effective drop height and
+    flight time both shrink relative to the flat-terrain case.
+    """
+    target = _base_target()
+    target["alt_m"] = 20.0
+    result = predict_drop_point(
+        payload_id=1, payload_mass_kg=0.5, mass_source="CONFIGURED", mass_uncertainty_kg=0.005,
+        aircraft_lat=-6.9, aircraft_lon=107.6, origin_lat=-6.9, origin_lon=107.6,
+        target=target,
+        altitude_raw_m=100.0, altitude_filtered_m=100.0, altitude_source="TEST", altitude_valid=True,
+        ground_velocity_n=18.0, ground_velocity_e=0.0, ground_velocity_u=0.0,
+        servo_delay_s=0.3,
+    )
+    assert result.target_altitude_source == "CONFIGURED"
+    assert result.target_altitude_offset_m == 20.0
+    assert result.effective_drop_height_m == 80.0
+    assert result.predicted_fall_time_s < 4.51  # sqrt(2*100/9.81) baseline
+
+
+def test_target_elevation_above_aircraft_blocks_without_crashing():
+    target = _base_target()
+    target["alt_m"] = 150.0  # higher than the aircraft's own altitude
+    result = predict_drop_point(
+        payload_id=1, payload_mass_kg=0.5, mass_source="CONFIGURED", mass_uncertainty_kg=0.005,
+        aircraft_lat=-6.9, aircraft_lon=107.6, origin_lat=-6.9, origin_lon=107.6,
+        target=target,
+        altitude_raw_m=100.0, altitude_filtered_m=100.0, altitude_source="TEST", altitude_valid=True,
+        ground_velocity_n=18.0, ground_velocity_e=0.0, ground_velocity_u=0.0,
+        servo_delay_s=0.3,
+    )
+    assert result.effective_drop_height_m == -50.0
+    assert result.release_allowed is False
+    assert "TARGET_ELEVATION_ABOVE_AIRCRAFT" in result.release_block_reason

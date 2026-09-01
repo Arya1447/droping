@@ -36,6 +36,15 @@ path (spec section 118).
   SIMULATION` smoke test — the system correctly refuses to release with
   placeholder coordinates rather than silently using (0, 0)).
 - `LOCAL_ORIGIN_LAT` / `LOCAL_ORIGIN_LON` — local NEU frame origin.
+- `TARGET_1["alt_m"]` / `TARGET_2["alt_m"]` — target ground elevation,
+  same reference frame as `GLOBAL_POSITION_INT.relative_alt` (relative
+  to the aircraft's home/launch point). `None` = ASSUMED level terrain
+  (target at home's elevation); `prediction.py` subtracts this from
+  `altitude_filtered_m` to get the actual ballistic drop height
+  (`effective_drop_height_m`). Only leave `None` if the field is
+  genuinely flat — otherwise survey it. If a target's elevation ends up
+  at or above the aircraft's current altitude, release is blocked with
+  `TARGET_ELEVATION_ABOVE_AIRCRAFT`, not silently miscalculated.
 - `TARGET_1["required_waypoint"]` / `TARGET_2["required_waypoint"]` —
   confirm the real mission sequence numbers (default: payload 1 = 6,
   per spec; payload 2 = 8 is a placeholder, confirm against the real
@@ -226,12 +235,14 @@ matplotlib stay offline-only (spec section 118).
 python3 -m pytest tests/ -q
 ```
 
-61 tests, covering ballistic fall time, mass invariance (ballistic) and
+64 tests, covering ballistic fall time, mass invariance (ballistic) and
 mass sensitivity (drag), wind vector decomposition, coordinate
 transforms, waypoint spatial crossing + latch, telemetry freshness +
 recovery + HEALTHY/DEGRADED/CRITICAL states, target box validation,
 state-machine gating, servo latch/no-duplicate/mapping, uncertainty
-estimation, Monte Carlo statistics, prediction stability, and an
-end-to-end `predict_drop_point()` integration test. All 61 currently
-pass. LIVE release is never exercised by automated tests (spec section
+estimation, Monte Carlo statistics, prediction stability, target
+elevation offset (level-terrain default, sloped-terrain correction,
+target-above-aircraft fail-closed case), and an end-to-end
+`predict_drop_point()` integration test. All 64 currently pass. LIVE
+release is never exercised by automated tests (spec section
 126).

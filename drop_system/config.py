@@ -190,7 +190,15 @@ MAX_PREDICTION_CHANGE_M = 1.0         # TEST default
 TARGET_1 = {
     "lat": None,  # UNKNOWN - fill with real mission target 1 latitude
     "lon": None,  # UNKNOWN - fill with real mission target 1 longitude
-    "alt_m": None,  # optional
+    # Target ground elevation, in the SAME reference frame as
+    # GLOBAL_POSITION_INT.relative_alt (i.e. relative to the aircraft's
+    # home/launch point, positive = higher than home). Used by
+    # prediction.py to correct the ballistic drop height when the
+    # target's terrain elevation differs from home's. None = ASSUMED
+    # level terrain (target at the same elevation as home) — only safe
+    # to leave None if the field is genuinely flat; otherwise survey it
+    # (e.g. GPS altitude at home minus GPS altitude at target).
+    "alt_m": None,
     "box": {
         "north_m": 5.0,  # CONFIGURED acceptance region half-extents
         "south_m": 5.0,
@@ -206,7 +214,7 @@ TARGET_1 = {
 TARGET_2 = {
     "lat": None,  # UNKNOWN - fill with real mission target 2 latitude
     "lon": None,  # UNKNOWN - fill with real mission target 2 longitude
-    "alt_m": None,
+    "alt_m": None,  # see TARGET_1["alt_m"] comment — same semantics
     "box": {
         "north_m": 5.0,
         "south_m": 5.0,
