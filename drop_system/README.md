@@ -12,9 +12,60 @@ guessing.
 runs a different (vision-trigger) drop architecture. Nothing here
 modifies that repository.
 
-## 1. Installation
+## Quick start — how to actually run this
+
+**Nothing here starts automatically.** `main.py` is a foreground
+script you run by hand; there is no systemd service for it (unlike
+`mavlink-supervisor.service`, which only brings up the MAVLink bridge,
+not `drop_system` itself). Check `ps aux | grep main.py` if unsure
+whether it's currently running — most of the time it won't be.
 
 ```bash
+cd drop_system                      # imports are flat, must run from here
+python3 -m venv .venv               # one-time setup
+.venv/bin/pip install -r requirements.txt
+
+# 1. Try it with zero hardware first:
+.venv/bin/python main.py --mode SIMULATION --cycles 5
+
+# 2. Once config.py is filled in (see "Configuration" below) AND
+#    mavlink-supervisor.service is active (`systemctl is-active
+#    mavlink-supervisor.service`) with real telemetry flowing on
+#    udp:127.0.0.1:14556:
+.venv/bin/python main.py --mode DRY_RUN            # no servo commands sent
+.venv/bin/python main.py --mode LIVE               # ALSO needs config.ENABLE_LIVE_RELEASE = True
+```
+
+`--cycles N` runs N cycles then exits (useful for smoke-testing);
+omit it to run forever until Ctrl+C. `DRY_RUN`/`LIVE` refuse to start
+at all if `config.LOCAL_ORIGIN_LAT`/`LON` are still `None` — that's
+intentional (see section 2), not a bug.
+
+**What still needs filling in before this produces a real drop
+decision** (all currently `None`/UNKNOWN placeholders in `config.py`):
+`LOCAL_ORIGIN_LAT`/`LON`, `TARGET_1`/`TARGET_2` `lat`/`lon`, each
+target's `geofence`, `SERVO_1`/`SERVO_2_EXPECTED_FUNCTION`. Until
+those are set, every run correctly reports `TARGET_INVALID` /
+`OUTSIDE_GEOFENCE` and blocks release — that is the fail-closed design
+working as intended, not something broken.
+
+**Known current caveat**: on this bench setup, `mavlink-supervisor.service`
+restarts MAVProxy roughly every ~20s (traced to two `--out` targets in
+`find_mavlink.py`'s `OUTS` pointing at Tailscale IPs while Tailscale is
+logged out — `tailscale up` resolves it; left as-is for now by
+operator choice). Expect `telemetry_health` to flip to `CRITICAL`
+briefly during each restart — `DRY_RUN`/`LIVE` will correctly block
+release during that window and recover on their own; this is not a
+`drop_system` bug.
+
+## 1. Installation
+
+Run from inside `drop_system/` (imports here are flat — no package
+`__init__.py` — so this must be the working directory both for the
+venv and for every command below):
+
+```bash
+cd drop_system
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
