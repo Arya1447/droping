@@ -24,6 +24,7 @@ import time
 from typing import Dict, Optional, Tuple
 
 import config
+import geofence
 from coordinate_utils import ground_track_from_velocity, horizontal_to_ne, latlon_to_local
 from filters import CircularEMAFilter, EMAFilter
 from logger import DropSystemLogger
@@ -242,6 +243,10 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
     except Exception:
         servo_mapping_valid = False
 
+    geofence_status = geofence.check_geofence(
+        telemetry["aircraft_lat"], telemetry["aircraft_lon"], config.GEOFENCE_POLYGON
+    )
+
     result = predict_drop_point(
         payload_id=runtime.payload_id,
         payload_mass_kg=config.PAYLOAD_MASS_KG_NOMINAL,
@@ -264,6 +269,7 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
         ground_speed_valid=telemetry.get("ground_speed_valid", False), airspeed_valid=telemetry.get("airspeed_valid", True),
         heartbeat_valid=telemetry.get("heartbeat_valid", False),
         telemetry_health=telemetry.get("telemetry_health", "CRITICAL"),
+        geofence_inside=geofence_status.inside, geofence_source=geofence_status.source,
         servo_mapping_valid=servo_mapping_valid,
         servo_safety_valid=servo_mapping_valid,
         live_release_enabled=(mode == "LIVE" and config.ENABLE_LIVE_RELEASE),
@@ -286,6 +292,7 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
         gps_valid=telemetry.get("gps_valid", False), altitude_valid=result.altitude_valid,
         ground_speed_valid=telemetry.get("ground_speed_valid", False), airspeed_valid=telemetry.get("airspeed_valid", True),
         heartbeat_valid=telemetry.get("heartbeat_valid", False), ekf_valid=telemetry.get("ekf_valid", False),
+        geofence_valid=geofence_status.inside,
         target_valid=result.target_valid, target_box_valid=result.target_box_valid,
         waypoint_passed=waypoint_passed,
         corridor_valid=abs(result.aircraft_cross_track_error_m) <= runtime.target["max_cross_track_error_m"],
@@ -318,15 +325,28 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
     logger.log_cycle(result, servo_output=servo_output, release_commanded=release_commanded,
                       release_verified=release_verified)
 
-    print(f"\nPAYLOAD {runtime.payload_id}")
-    print(f"Waypoint {runtime.target['required_waypoint']:<3}: {'PASSED' if waypoint_passed else 'PENDING'}")
-    print(f"Target        : {'VALID' if result.target_valid else 'INVALID'}")
-    print(f"Target Box    : {'VALID' if result.target_box_valid else 'INVALID'}, "
-          f"impact inside box: {result.predicted_impact_inside_box}")
-    print(f"Prediction    : {'STABLE' if result.prediction_stable else 'NOT STABLE'}, "
+    def _fmt(value, unit="", digits=2):
+        return f"{value:.{digits}f}{unit}" if value is not None else "N/A"
+
+    print(f"\n=== PAYLOAD {runtime.payload_id} ===")
+    print(f"Telemetry Health : {result.telemetry_health}")
+    print(f"Geofence         : {'INSIDE' if result.geofence_inside else 'OUTSIDE'} (source={result.geofence_source})")
+    print(f"Waypoint {runtime.target['required_waypoint']:<3}    : {'PASSED' if waypoint_passed else 'PENDING'}")
+    print(f"Target           : {'VALID' if result.target_valid else 'INVALID'}")
+    print(f"Target Box       : {'VALID' if result.target_box_valid else 'INVALID'}, "
+          f"predicted impact inside box: {result.predicted_impact_inside_box}")
+    print(f"Airspeed         : {_fmt(result.air_speed_mps, ' m/s')}")
+    print(f"Ground Speed     : {_fmt(result.ground_speed_mps, ' m/s')} (ground_track={_fmt(result.ground_track_deg, ' deg')})")
+    print(f"Altitude         : raw={_fmt(result.altitude_raw_m, ' m')}, "
+          f"filtered={_fmt(result.altitude_filtered_m, ' m')} (source={result.altitude_source})")
+    print(f"Distance-to-target (along-track): {_fmt(result.target_distance_m, ' m')}")
+    print(f"Cross-track error (aircraft)    : {_fmt(result.aircraft_cross_track_error_m, ' m')}")
+    print(f"Wind             : {_fmt(result.wind_speed_mps, ' m/s')} @ "
+          f"{_fmt(result.wind_direction_from_deg, ' deg')} (source={result.wind_source}, quality={result.wind_quality})")
+    print(f"Prediction       : {'STABLE' if result.prediction_stable else 'NOT STABLE'}, "
           f"confidence={result.confidence}")
-    print(f"Final release distance: {result.final_release_distance_m:.2f} m, "
-          f"predicted impact error (2D): {result.predicted_impact_error_2d_m:.2f} m")
+    print(f"Final Release Distance   : {_fmt(result.final_release_distance_m, ' m')}")
+    print(f"Predicted Impact Error   : {_fmt(result.predicted_impact_error_2d_m, ' m')}")
     if block_reasons:
         print("RELEASE BLOCKED")
         print("REASONS:")

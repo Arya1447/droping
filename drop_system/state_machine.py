@@ -51,6 +51,7 @@ class GateInputs:
     airspeed_valid: bool = False
     heartbeat_valid: bool = False
     ekf_valid: bool = False
+    geofence_valid: bool = False
 
     target_valid: bool = False
     target_box_valid: bool = False
@@ -80,6 +81,7 @@ _GATE_REASON_MAP = [
     ("airspeed_valid", "AIRSPEED_INVALID"),
     ("heartbeat_valid", "HEARTBEAT_INVALID"),
     ("ekf_valid", "EKF_INVALID"),
+    ("geofence_valid", "OUTSIDE_GEOFENCE"),
     ("target_valid", "TARGET_INVALID"),
     ("target_box_valid", "TARGET_BOX_INVALID"),
     ("waypoint_passed", "WAYPOINT_NOT_PASSED"),

@@ -179,6 +179,22 @@ used.
 35/155), not `MISSION_CURRENT.seq >= required_waypoint` alone. Once
 passed, latches permanently for that `WaypointValidator` instance.
 
+## 10a. Geofence
+
+`geofence.py` is independent of, but follows the same convention as,
+the sibling `krti-flight-software/batas_koordinat.py` — a rectangular/
+polygonal boundary checked via point-in-polygon on raw lat/lon (plain
+Python ray-casting here, no shapely dependency, no cross-project
+import). `config.GEOFENCE_POLYGON` is `None`/UNKNOWN by default —
+**fail-closed**: with no polygon configured, `geofence_valid` is
+always `False` and release stays blocked, exactly like an unconfigured
+target. If your mission uses the same boundary as `batas_koordinat.py`'s
+`AREA` list, copy those exact `(lat, lon)` points into
+`GEOFENCE_POLYGON` — the two files are maintained independently, so
+keeping them in sync is a manual step, not automatic. Every prediction
+cycle logs `geofence_inside`/`geofence_source` and the live debug
+output shows `Geofence: INSIDE/OUTSIDE (source=...)` per payload.
+
 ## 11. Dual-payload state machine
 
 `state_machine.py` — two fully independent `PayloadStateMachine`
@@ -260,7 +276,7 @@ matplotlib stay offline-only (spec section 118).
 python3 -m pytest tests/ -q
 ```
 
-67 tests, covering ballistic fall time, mass invariance (ballistic) and
+77 tests, covering ballistic fall time, mass invariance (ballistic) and
 mass sensitivity (drag), wind vector decomposition, coordinate
 transforms, waypoint spatial crossing + latch, telemetry freshness +
 recovery + HEALTHY/DEGRADED/CRITICAL states, target box validation,
@@ -268,6 +284,7 @@ state-machine gating, servo latch/no-duplicate/mapping, uncertainty
 estimation, Monte Carlo statistics, prediction stability, target
 elevation offset (level-terrain default, sloped-terrain correction,
 target-above-aircraft fail-closed case), GPS/EKF validity thresholds,
-and an end-to-end `predict_drop_point()` integration test. All 67
-currently pass. LIVE release is never exercised by automated tests
-(spec section 126).
+geofence point-in-polygon + fail-closed-when-unconfigured, and an
+end-to-end `predict_drop_point()` integration test. All 77 currently
+pass. LIVE release is never exercised by automated tests (spec section
+126).

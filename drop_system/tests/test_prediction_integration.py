@@ -107,6 +107,39 @@ def test_target_altitude_offset_reduces_effective_drop_height():
     assert result.predicted_fall_time_s < 4.51  # sqrt(2*100/9.81) baseline
 
 
+def test_geofence_status_passed_through_to_result():
+    target = _base_target()
+    result = predict_drop_point(
+        payload_id=1, payload_mass_kg=0.5, mass_source="CONFIGURED", mass_uncertainty_kg=0.005,
+        aircraft_lat=-6.9, aircraft_lon=107.6, origin_lat=-6.9, origin_lon=107.6,
+        target=target,
+        altitude_raw_m=100.0, altitude_filtered_m=100.0, altitude_source="TEST", altitude_valid=True,
+        ground_velocity_n=18.0, ground_velocity_e=0.0, ground_velocity_u=0.0,
+        servo_delay_s=0.3,
+        geofence_inside=True, geofence_source="CONFIGURED",
+    )
+    assert result.geofence_inside is True
+    assert result.geofence_source == "CONFIGURED"
+
+
+def test_geofence_outside_blocks_release():
+    target = _base_target()
+    result = predict_drop_point(
+        payload_id=1, payload_mass_kg=0.5, mass_source="CONFIGURED", mass_uncertainty_kg=0.005,
+        aircraft_lat=-6.9, aircraft_lon=107.6, origin_lat=-6.9, origin_lon=107.6,
+        target=target,
+        altitude_raw_m=100.0, altitude_filtered_m=100.0, altitude_source="TEST", altitude_valid=True,
+        ground_velocity_n=18.0, ground_velocity_e=0.0, ground_velocity_u=0.0,
+        servo_delay_s=0.3,
+        waypoint_passed=True, gps_valid=True, ekf_valid=True, ground_speed_valid=True,
+        airspeed_valid=True, heartbeat_valid=True, telemetry_health="HEALTHY",
+        servo_mapping_valid=True, servo_safety_valid=True, live_release_enabled=True,
+        geofence_inside=False, geofence_source="CONFIGURED",
+    )
+    assert result.release_allowed is False
+    assert "OUTSIDE_GEOFENCE" in result.release_block_reason
+
+
 def test_target_elevation_above_aircraft_blocks_without_crashing():
     target = _base_target()
     target["alt_m"] = 150.0  # higher than the aircraft's own altitude

@@ -214,6 +214,8 @@ class PredictionResult:
     predicted_impact_inside_box: bool
     waypoint_valid: bool
     telemetry_health: str
+    geofence_inside: bool
+    geofence_source: str  # CONFIGURED / UNKNOWN
 
     prediction_stable: bool
     prediction_uncertainty_m: Optional[float]  # std of live-sampled impact_error_2d
@@ -319,6 +321,8 @@ def predict_drop_point(
     airspeed_valid: bool = False,
     heartbeat_valid: bool = False,
     telemetry_health: str = "CRITICAL",
+    geofence_inside: bool = False,
+    geofence_source: str = "UNKNOWN",
 
     servo_mapping_valid: bool = False,
     servo_safety_valid: bool = False,
@@ -508,6 +512,7 @@ def predict_drop_point(
         airspeed_valid=airspeed_valid,
         heartbeat_valid=heartbeat_valid,
         ekf_valid=ekf_valid,
+        geofence_valid=geofence_inside,
         target_valid=t_valid,
         target_box_valid=t_valid,
         waypoint_passed=waypoint_passed,
@@ -595,6 +600,8 @@ def predict_drop_point(
         predicted_impact_inside_box=impact_inside_box,
         waypoint_valid=waypoint_passed,
         telemetry_health=telemetry_health,
+        geofence_inside=geofence_inside,
+        geofence_source=geofence_source,
 
         prediction_stable=stable,
         prediction_uncertainty_m=unc,

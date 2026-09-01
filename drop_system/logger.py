@@ -37,6 +37,7 @@ CYCLE_LOG_FIELDS = [
     "gravity_force_n", "gravity_acceleration_mps2",
     "drag_force_n", "drag_acceleration_mps2", "ballistic_coefficient_kgm2",
     "target_valid", "target_box_valid", "predicted_impact_inside_box", "waypoint_valid",
+    "geofence_inside", "geofence_source",
     "prediction_stable", "prediction_uncertainty_m", "confidence",
     "release_allowed", "release_block_reason",
     "servo_output", "release_commanded", "release_verified",

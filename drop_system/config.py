@@ -25,7 +25,7 @@ UNKNOWN.
 from __future__ import annotations
 
 import dataclasses
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 
 # ============================================================
@@ -228,6 +228,21 @@ TARGET_2 = {
 }
 
 TARGETS = {1: TARGET_1, 2: TARGET_2}
+
+
+# ============================================================
+# GEOFENCE
+# ============================================================
+#
+# Independent of, but same convention as, krti-flight-software's
+# batas_koordinat.py AREA list (rectangular/polygonal boundary,
+# point-in-polygon on raw lat/lon). UNKNOWN (None) until the operator
+# fills it in — a fail-closed default (see geofence.py:
+# check_geofence()), since "no fence configured" must never be
+# silently read as "release anywhere is fine". If your mission uses
+# the same boundary as batas_koordinat.py's AREA, copy those exact
+# (lat, lon) points here; the two files are maintained independently.
+GEOFENCE_POLYGON: Optional[List[Tuple[float, float]]] = None  # UNKNOWN
 
 
 # ============================================================

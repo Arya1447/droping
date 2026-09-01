@@ -50,6 +50,13 @@ def test_state_machine_single_false_gate_blocks():
     assert "GPS_INVALID" in reasons
 
 
+def test_state_machine_geofence_gate_blocks():
+    gates = _all_true_gates()
+    gates.geofence_valid = False
+    reasons = evaluate_gates(gates, already_released=False)
+    assert "OUTSIDE_GEOFENCE" in reasons
+
+
 def test_state_machine_no_duplicate_release():
     sm = PayloadStateMachine(payload_id=1)
     sm.commit_release()
