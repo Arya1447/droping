@@ -313,7 +313,9 @@ SERVO_2_EXPECTED_FUNCTION: Optional[int] = None  # UNKNOWN
 # LIVE LOOP TIMING
 # ============================================================
 
-PREDICTION_CYCLE_HZ = 5.0  # CONFIGURED target live-loop rate
+PREDICTION_CYCLE_HZ = 10.0  # CONFIGURED target live-loop rate — raw
+# GLOBAL_POSITION_INT arrives ~19 Hz (measured), so 10 Hz consumption
+# still always gets fresh (<=100ms old) data, never starved.
 
 
 # ============================================================
