@@ -37,9 +37,13 @@ python3 -m venv .venv               # one-time setup
 ```
 
 `--cycles N` runs N cycles then exits (useful for smoke-testing);
-omit it to run forever until Ctrl+C. `DRY_RUN`/`LIVE` refuse to start
-at all if `config.LOCAL_ORIGIN_LAT`/`LON` are still `None` — that's
-intentional (see section 2), not a bug.
+omit it to run forever until Ctrl+C. If `config.LOCAL_ORIGIN_LAT`/`LON`
+are still `None`, `DRY_RUN`/`LIVE` no longer refuse to start — they
+print a notice and sit on `HOLD` (release blocked) each cycle until
+the aircraft's own first valid GPS fix (`fix_type>=3`) arrives, then
+auto-capture that position as the origin for the rest of the run and
+proceed normally. Manually setting `LOCAL_ORIGIN_LAT`/`LON` still
+works and skips this wait entirely — manual always takes priority.
 
 **What still needs filling in before this produces a real drop
 decision** (all currently `None`/UNKNOWN placeholders in `config.py`):
@@ -87,6 +91,9 @@ path (spec section 118).
   SIMULATION` smoke test — the system correctly refuses to release with
   placeholder coordinates rather than silently using (0, 0)).
 - `LOCAL_ORIGIN_LAT` / `LOCAL_ORIGIN_LON` — local NEU frame origin.
+  Optional to set by hand: if left `None`, `DRY_RUN`/`LIVE` auto-capture
+  it from the aircraft's first valid GPS fix instead of refusing to
+  start (see section 13).
 - `TARGET_1["alt_m"]` / `TARGET_2["alt_m"]` — target ground elevation,
   same reference frame as `GLOBAL_POSITION_INT.relative_alt` (relative
   to the aircraft's home/launch point). `None` = ASSUMED level terrain
@@ -295,10 +302,22 @@ telemetry constants in that path:
 | waypoint positions | `MISSION_ITEM_INT`, fetched once at startup via `MAVLinkInterface.fetch_mission_items()` | not re-fetched every cycle (spec section 117) |
 | servo mapping | `SERVOx_FUNCTION` param, compared against `config.SERVO_1_EXPECTED_FUNCTION`/`SERVO_2_EXPECTED_FUNCTION` | **both `None`/UNKNOWN by default — you must fill these in** after checking your vehicle's real params, or servo release stays blocked |
 
-`config.LOCAL_ORIGIN_LAT`/`LON` **must** be set (not `None`) to run
-`DRY_RUN`/`LIVE` — `main()` refuses to start otherwise, since local
-geometry needs one fixed origin across cycles, not a rolling
-"current position" one. `MAVLinkInterface.connect()` now fails loudly
+`config.LOCAL_ORIGIN_LAT`/`LON` needs ONE fixed value across cycles
+(local geometry breaks if it moves — waypoint spatial-crossing in
+particular compares positions across time in the same frame). If left
+`None`, `main()` no longer refuses to start: it prints a notice, sits
+on `HOLD` each cycle (nothing computable without a frame — release
+stays blocked), and auto-captures the aircraft's own position at its
+first valid GPS fix (`fix_type>=3`, via `main._maybe_capture_origin`)
+as the origin for the rest of that run. A manually-configured value
+always takes priority and skips the wait. Either way, the origin is
+purely a coordinate-math anchor — the aircraft-to-target distance that
+actually matters for the drop decision is a delta, and is the same
+regardless of which fixed point the origin happens to be (see
+`coordinate_utils.latlon_to_local` — it cancels out algebraically);
+home is used because it's the easiest position to obtain first and
+because `relative_alt` is already home-relative, keeping N/E/U on one
+consistent reference. `MAVLinkInterface.connect()` fails loudly
 (`MAVLinkUnavailableError`) if no HEARTBEAT arrives within the connect
 timeout, rather than silently proceeding with `target_system=0`.
 
@@ -333,7 +352,7 @@ matplotlib stay offline-only (spec section 118).
 python3 -m pytest tests/ -q
 ```
 
-79 tests, covering ballistic fall time, mass invariance (ballistic) and
+83 tests, covering ballistic fall time, mass invariance (ballistic) and
 mass sensitivity (drag), wind vector decomposition, coordinate
 transforms, waypoint spatial crossing + latch, telemetry freshness +
 recovery + HEALTHY/DEGRADED/CRITICAL states, target box validation,
@@ -341,13 +360,14 @@ state-machine gating, servo latch/no-duplicate/mapping, uncertainty
 estimation, Monte Carlo statistics, prediction stability, target
 elevation offset (level-terrain default, sloped-terrain correction,
 target-above-aircraft fail-closed case), GPS/EKF validity thresholds,
-geofence point-in-polygon + fail-closed-when-unconfigured, an
-end-to-end `predict_drop_point()` integration test, and
-`test_live_mode_safety.py` (the durable version of a manual real-FC
-verification — connected to the real flight controller, fetched a
-real uploaded mission, ran full LIVE-mode cycles for both payloads,
-zero servo commands sent while `ENABLE_LIVE_RELEASE=False`). All 79
-currently pass. Actual servo firing (`ENABLE_LIVE_RELEASE=True`) is
+geofence point-in-polygon + fail-closed-when-unconfigured, auto-origin
+capture from first GPS fix, an end-to-end `predict_drop_point()`
+integration test, and `test_live_mode_safety.py` (the durable version
+of a manual real-FC verification — connected to the real flight
+controller, fetched a real uploaded mission, ran full LIVE-mode cycles
+for both payloads, zero servo commands sent while
+`ENABLE_LIVE_RELEASE=False`). All 83 currently pass. Actual servo
+firing (`ENABLE_LIVE_RELEASE=True`) is
 never exercised by automated tests (spec section 126) — only the
 guarantee that it stays off by default and blocks release regardless
 of how favorable every other gate is.

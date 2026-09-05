@@ -116,6 +116,17 @@ def _resolve_waypoint_positions(runtimes: Dict[int, "PayloadRuntime"],
                   "(config.py required_waypoint vs. the uploaded mission likely disagree).")
 
 
+def _maybe_capture_origin(telemetry: Dict) -> Optional[Tuple[float, float]]:
+    """Returns (lat, lon) to lock in as the local origin if this cycle's
+    telemetry has a valid GPS fix and a position, else None. Pulled out
+    as its own pure function so the capture DECISION is unit-testable
+    without a real MAVLink connection.
+    """
+    if telemetry.get("gps_valid") and "aircraft_lat" in telemetry:
+        return telemetry["aircraft_lat"], telemetry["aircraft_lon"]
+    return None
+
+
 def _live_telemetry(mavlink: MAVLinkInterface, health: TelemetryHealth, now: float) -> Dict:
     """Build one cycle's telemetry dict entirely from the latest received
     MAVLink messages (spec sections 145-165: LIVE altitude/velocity/
@@ -386,11 +397,20 @@ def main() -> int:
     print(f"Starting drop_system in {args.mode} mode "
           f"(ENABLE_LIVE_RELEASE={config.ENABLE_LIVE_RELEASE})")
 
-    if args.mode != "SIMULATION" and (config.LOCAL_ORIGIN_LAT is None or config.LOCAL_ORIGIN_LON is None):
-        print("config.LOCAL_ORIGIN_LAT/LON must be set for DRY_RUN/LIVE mode — local "
-              "geometry needs a fixed origin, not a rolling 'current position' one. "
-              "Set it to your home/launch point coordinates before running this mode.")
-        return 1
+    # SIMULATION never needs a locked origin (run_cycle's own per-cycle
+    # fallback already handles it). DRY_RUN/LIVE need ONE fixed origin
+    # for the lifetime of the run — either manually configured, or
+    # captured automatically from the aircraft's own position at the
+    # first valid GPS fix (fix_type>=3). Once captured it never changes
+    # again this run, even if GPS later degrades (that's tracked
+    # separately by the normal gps_valid gate).
+    origin_locked = args.mode == "SIMULATION" or (
+        config.LOCAL_ORIGIN_LAT is not None and config.LOCAL_ORIGIN_LON is not None
+    )
+    if not origin_locked:
+        print("config.LOCAL_ORIGIN_LAT/LON not set — will auto-capture from the "
+              "aircraft's own position at the first valid GPS fix. Release stays "
+              "on HOLD (waypoint/target/geofence geometry unavailable) until then.")
 
     runtimes = {pid: PayloadRuntime(pid, target) for pid, target in config.TARGETS.items()}
     logger = DropSystemLogger(config.LOG_CSV_PATH)
@@ -415,7 +435,10 @@ def main() -> int:
             print(f"WARNING: could not fetch mission items ({exc}); "
                   "waypoint-passed will stay False until this is retried.")
             mission_items = {}
-        _resolve_waypoint_positions(runtimes, mission_items, config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON)
+        if origin_locked:
+            _resolve_waypoint_positions(runtimes, mission_items, config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON)
+        else:
+            print("Waypoint positions will be resolved once the local origin is captured.")
 
         # Each payload's expected SERVOx_FUNCTION is configured
         # independently in config.py (default UNKNOWN -> mapping stays
@@ -447,6 +470,22 @@ def main() -> int:
                     if mavlink.poll(blocking=False) is None:
                         time.sleep(0.005)
                 telemetry = _live_telemetry(mavlink, telemetry_health, now=time.monotonic())
+
+            if not origin_locked:
+                captured = _maybe_capture_origin(telemetry)
+                if captured is not None:
+                    config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON = captured
+                    origin_locked = True
+                    print(f"LOCAL ORIGIN CAPTURED (source=AUTO_FIRST_GPS_FIX): "
+                          f"lat={config.LOCAL_ORIGIN_LAT:.7f}, lon={config.LOCAL_ORIGIN_LON:.7f}")
+                    _resolve_waypoint_positions(runtimes, mission_items, config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON)
+                else:
+                    print("HOLD: waiting for a valid GPS fix to establish local origin "
+                          "(gps_valid=False or no position yet) — release blocked.")
+                    cycle += 1
+                    elapsed = time.monotonic() - t0
+                    time.sleep(max(0.0, period_s - elapsed))
+                    continue
 
             for pid, runtime in runtimes.items():
                 run_cycle(runtime, telemetry, args.mode, servo, logger)
