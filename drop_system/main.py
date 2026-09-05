@@ -415,6 +415,17 @@ def main() -> int:
     print(f"Starting drop_system in {args.mode} mode "
           f"(ENABLE_LIVE_RELEASE={config.ENABLE_LIVE_RELEASE})")
 
+    # Create/reset the live status file immediately, before MAVLink
+    # connect/mission-fetch or the GPS-fix wait even begin — otherwise
+    # `watch cat droping.log` errors with "No such file" for however
+    # long that takes.
+    try:
+        with open(config.LIVE_LOG_FILE, "w") as f:
+            f.write(f"drop_system starting in {args.mode} mode — "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    except OSError as exc:
+        print(f"WARNING: could not write {config.LIVE_LOG_FILE}: {exc}")
+
     # SIMULATION never needs a locked origin (run_cycle's own per-cycle
     # fallback already handles it). DRY_RUN/LIVE need ONE fixed origin
     # for the lifetime of the run — either manually configured, or
@@ -501,6 +512,21 @@ def main() -> int:
                     print(f"\r[{time.strftime('%H:%M:%S')}] cycle={cycle} HOLD: waiting for a "
                           "valid GPS fix to establish local origin — release blocked."
                           "          ", end="", flush=True)
+                    try:
+                        with open(config.LIVE_LOG_FILE, "w") as f:
+                            f.write(
+                                f"drop_system live status — {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                                f"— cycle {cycle} — mode={args.mode}\n\n"
+                                "HOLD: waiting for a valid GPS fix to establish the local "
+                                "origin (config.LOCAL_ORIGIN_LAT/LON auto-capture) — no "
+                                "aircraft/target geometry is computable yet, both payloads "
+                                "blocked.\n"
+                                f"gps_valid={telemetry.get('gps_valid')}  "
+                                f"aircraft_lat={telemetry.get('aircraft_lat', 'N/A')}  "
+                                f"aircraft_lon={telemetry.get('aircraft_lon', 'N/A')}\n"
+                            )
+                    except OSError as exc:
+                        print(f"WARNING: could not write {config.LIVE_LOG_FILE}: {exc}")
                     cycle += 1
                     elapsed = time.monotonic() - t0
                     time.sleep(max(0.0, period_s - elapsed))
