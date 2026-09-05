@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import time
 from typing import Dict, Optional, Tuple
 
@@ -559,6 +560,18 @@ def main() -> int:
             time.sleep(max(0.0, period_s - elapsed))
     except KeyboardInterrupt:
         print("\nStopped (Ctrl+C)")
+    finally:
+        # droping.log is a live-status snapshot only, not a record worth
+        # keeping between runs (unlike config.LOG_CSV_PATH, the actual
+        # flight-test CSV used for post-flight calibration -- that one
+        # is deliberately left alone). Clean it up however the program
+        # exits: normal --cycles completion, Ctrl+C, or an error.
+        try:
+            os.remove(config.LIVE_LOG_FILE)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            print(f"WARNING: could not remove {config.LIVE_LOG_FILE}: {exc}")
 
     return 0
 
