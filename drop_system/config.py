@@ -323,3 +323,11 @@ PREDICTION_CYCLE_HZ = 10.0  # CONFIGURED target live-loop rate — raw
 # ============================================================
 
 LOG_CSV_PATH = "drop_system_log.csv"  # CONFIGURED
+
+# Live human-readable status file (spec-external addition, not a spec
+# section): overwritten fresh at the start of every prediction cycle,
+# then each payload appends its block — so `watch cat droping.log` (or
+# any editor with auto-reload) shows current numbers without the
+# console scrolling. The console itself only prints a compact one-line
+# status per cycle (see main.py).
+LIVE_LOG_FILE = "droping.log"  # CONFIGURED

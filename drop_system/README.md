@@ -36,6 +36,19 @@ python3 -m venv .venv               # one-time setup
 .venv/bin/python main.py --mode LIVE               # ALSO needs config.ENABLE_LIVE_RELEASE = True
 ```
 
+**Console output is intentionally quiet**: one line per cycle, updated
+in place (`\r`, no scrolling) — e.g.
+`[14:32:05] cycle=142 OK  telemetry=HEALTHY  P1:HOLD(3) P2:HOLD(3)  -> droping.log`
+— just enough to confirm the loop is alive and how many gates are
+still blocking each payload. Every actual parameter (airspeed, ground
+speed, altitude, geofence, target box, wind, release distance, impact
+error, the full block-reason list, ...) is written instead to
+`config.LIVE_LOG_FILE` (`droping.log` by default), overwritten fresh
+at the start of every cycle. Watch it live in a second terminal:
+```bash
+watch -n 0.2 cat droping.log
+```
+
 `--cycles N` runs N cycles then exits (useful for smoke-testing);
 omit it to run forever until Ctrl+C. If `config.LOCAL_ORIGIN_LAT`/`LON`
 are still `None`, `DRY_RUN`/`LIVE` no longer refuse to start — they
@@ -255,8 +268,8 @@ two are the same polygon.
 Both default to `None`/UNKNOWN — **fail-closed**: with no polygon
 configured for that payload, its `geofence_valid` is always `False`
 and release stays blocked, exactly like an unconfigured target. Every
-prediction cycle logs `geofence_inside`/`geofence_source` and the live
-debug output shows `Geofence: INSIDE/OUTSIDE (source=...)` per
+prediction cycle logs `geofence_inside`/`geofence_source` to the CSV
+and `droping.log` shows `Geofence: INSIDE/OUTSIDE (source=...)` per
 payload.
 
 ## 11. Dual-payload state machine
@@ -352,7 +365,7 @@ matplotlib stay offline-only (spec section 118).
 python3 -m pytest tests/ -q
 ```
 
-83 tests, covering ballistic fall time, mass invariance (ballistic) and
+86 tests, covering ballistic fall time, mass invariance (ballistic) and
 mass sensitivity (drag), wind vector decomposition, coordinate
 transforms, waypoint spatial crossing + latch, telemetry freshness +
 recovery + HEALTHY/DEGRADED/CRITICAL states, target box validation,
@@ -361,13 +374,13 @@ estimation, Monte Carlo statistics, prediction stability, target
 elevation offset (level-terrain default, sloped-terrain correction,
 target-above-aircraft fail-closed case), GPS/EKF validity thresholds,
 geofence point-in-polygon + fail-closed-when-unconfigured, auto-origin
-capture from first GPS fix, an end-to-end `predict_drop_point()`
-integration test, and `test_live_mode_safety.py` (the durable version
-of a manual real-FC verification — connected to the real flight
-controller, fetched a real uploaded mission, ran full LIVE-mode cycles
-for both payloads, zero servo commands sent while
-`ENABLE_LIVE_RELEASE=False`). All 83 currently pass. Actual servo
-firing (`ENABLE_LIVE_RELEASE=True`) is
+capture from first GPS fix, the quiet-console/`droping.log` split, an
+end-to-end `predict_drop_point()` integration test, and
+`test_live_mode_safety.py` (the durable version of a manual real-FC
+verification — connected to the real flight controller, fetched a
+real uploaded mission, ran full LIVE-mode cycles for both payloads,
+zero servo commands sent while `ENABLE_LIVE_RELEASE=False`). All 86
+currently pass. Actual servo firing (`ENABLE_LIVE_RELEASE=True`) is
 never exercised by automated tests (spec section 126) — only the
 guarantee that it stays off by default and blocks release regardless
 of how favorable every other gate is.

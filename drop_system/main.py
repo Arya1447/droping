@@ -219,9 +219,50 @@ def _live_telemetry(mavlink: MAVLinkInterface, health: TelemetryHealth, now: flo
     return telemetry
 
 
+def _format_payload_detail(runtime: "PayloadRuntime", result, waypoint_passed: bool,
+                            block_reasons: list) -> str:
+    """Full per-payload parameter dump, as a single text block — written
+    to config.LIVE_LOG_FILE (overwritten fresh each cycle), never to
+    stdout, so the console stays quiet while every number is still
+    visible in real time via `watch cat droping.log` (or similar).
+    """
+    def _fmt(value, unit="", digits=2):
+        return f"{value:.{digits}f}{unit}" if value is not None else "N/A"
+
+    lines = [
+        f"=== PAYLOAD {runtime.payload_id} ===",
+        f"Telemetry Health : {result.telemetry_health}",
+        f"Geofence         : {'INSIDE' if result.geofence_inside else 'OUTSIDE'} (source={result.geofence_source})",
+        f"Waypoint {runtime.target['required_waypoint']:<3}    : {'PASSED' if waypoint_passed else 'PENDING'}",
+        f"Target           : {'VALID' if result.target_valid else 'INVALID'}",
+        f"Target Box       : {'VALID' if result.target_box_valid else 'INVALID'}, "
+        f"predicted impact inside box: {result.predicted_impact_inside_box}",
+        f"Airspeed         : {_fmt(result.air_speed_mps, ' m/s')}",
+        f"Ground Speed     : {_fmt(result.ground_speed_mps, ' m/s')} (ground_track={_fmt(result.ground_track_deg, ' deg')})",
+        f"Altitude         : raw={_fmt(result.altitude_raw_m, ' m')}, "
+        f"filtered={_fmt(result.altitude_filtered_m, ' m')} (source={result.altitude_source})",
+        f"Distance-to-target (along-track): {_fmt(result.target_distance_m, ' m')}",
+        f"Cross-track error (aircraft)    : {_fmt(result.aircraft_cross_track_error_m, ' m')}",
+        f"Wind             : {_fmt(result.wind_speed_mps, ' m/s')} @ "
+        f"{_fmt(result.wind_direction_from_deg, ' deg')} (source={result.wind_source}, quality={result.wind_quality})",
+        f"Prediction       : {'STABLE' if result.prediction_stable else 'NOT STABLE'}, confidence={result.confidence}",
+        f"Final Release Distance   : {_fmt(result.final_release_distance_m, ' m')}",
+        f"Predicted Impact Error   : {_fmt(result.predicted_impact_error_2d_m, ' m')}",
+    ]
+    if block_reasons:
+        lines.append("RELEASE BLOCKED")
+        lines.append("REASONS:")
+        lines.extend(f"    {r}" for r in block_reasons)
+    else:
+        lines.append("RELEASE: READY" if not runtime.state_machine.released else "RELEASE: DONE")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
               servo: "FakeServoController | MAVLinkServoController",
-              logger: DropSystemLogger, empirical_correction_fn=None) -> bool:
+              logger: DropSystemLogger, empirical_correction_fn=None,
+              live_log_path: Optional[str] = None) -> bool:
     """Returns True if a cycle was actually run, False if it was skipped
     because the aircraft's own position/altitude hasn't arrived over
     MAVLink yet this run (LIVE/DRY_RUN only — SIMULATION always has it).
@@ -340,35 +381,12 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
     logger.log_cycle(result, servo_output=servo_output, release_commanded=release_commanded,
                       release_verified=release_verified)
 
-    def _fmt(value, unit="", digits=2):
-        return f"{value:.{digits}f}{unit}" if value is not None else "N/A"
-
-    print(f"\n=== PAYLOAD {runtime.payload_id} ===")
-    print(f"Telemetry Health : {result.telemetry_health}")
-    print(f"Geofence         : {'INSIDE' if result.geofence_inside else 'OUTSIDE'} (source={result.geofence_source})")
-    print(f"Waypoint {runtime.target['required_waypoint']:<3}    : {'PASSED' if waypoint_passed else 'PENDING'}")
-    print(f"Target           : {'VALID' if result.target_valid else 'INVALID'}")
-    print(f"Target Box       : {'VALID' if result.target_box_valid else 'INVALID'}, "
-          f"predicted impact inside box: {result.predicted_impact_inside_box}")
-    print(f"Airspeed         : {_fmt(result.air_speed_mps, ' m/s')}")
-    print(f"Ground Speed     : {_fmt(result.ground_speed_mps, ' m/s')} (ground_track={_fmt(result.ground_track_deg, ' deg')})")
-    print(f"Altitude         : raw={_fmt(result.altitude_raw_m, ' m')}, "
-          f"filtered={_fmt(result.altitude_filtered_m, ' m')} (source={result.altitude_source})")
-    print(f"Distance-to-target (along-track): {_fmt(result.target_distance_m, ' m')}")
-    print(f"Cross-track error (aircraft)    : {_fmt(result.aircraft_cross_track_error_m, ' m')}")
-    print(f"Wind             : {_fmt(result.wind_speed_mps, ' m/s')} @ "
-          f"{_fmt(result.wind_direction_from_deg, ' deg')} (source={result.wind_source}, quality={result.wind_quality})")
-    print(f"Prediction       : {'STABLE' if result.prediction_stable else 'NOT STABLE'}, "
-          f"confidence={result.confidence}")
-    print(f"Final Release Distance   : {_fmt(result.final_release_distance_m, ' m')}")
-    print(f"Predicted Impact Error   : {_fmt(result.predicted_impact_error_2d_m, ' m')}")
-    if block_reasons:
-        print("RELEASE BLOCKED")
-        print("REASONS:")
-        for r in block_reasons:
-            print(f"    {r}")
-    else:
-        print("RELEASE: READY" if mode != "LIVE" else "RELEASE: COMMANDED")
+    if live_log_path:
+        try:
+            with open(live_log_path, "a") as f:
+                f.write(_format_payload_detail(runtime, result, waypoint_passed, block_reasons))
+        except OSError as exc:
+            print(f"WARNING: could not write {live_log_path}: {exc}")
 
     return True
 
@@ -480,15 +498,35 @@ def main() -> int:
                           f"lat={config.LOCAL_ORIGIN_LAT:.7f}, lon={config.LOCAL_ORIGIN_LON:.7f}")
                     _resolve_waypoint_positions(runtimes, mission_items, config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON)
                 else:
-                    print("HOLD: waiting for a valid GPS fix to establish local origin "
-                          "(gps_valid=False or no position yet) — release blocked.")
+                    print(f"\r[{time.strftime('%H:%M:%S')}] cycle={cycle} HOLD: waiting for a "
+                          "valid GPS fix to establish local origin — release blocked."
+                          "          ", end="", flush=True)
                     cycle += 1
                     elapsed = time.monotonic() - t0
                     time.sleep(max(0.0, period_s - elapsed))
                     continue
 
+            # Fresh snapshot each cycle: truncate + header, then each
+            # run_cycle() call below appends its payload's block. Full
+            # numbers live here, not on the console (see module
+            # docstring / config.LIVE_LOG_FILE).
+            try:
+                with open(config.LIVE_LOG_FILE, "w") as f:
+                    f.write(f"drop_system live status — {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                            f"— cycle {cycle} — mode={args.mode}\n\n")
+            except OSError as exc:
+                print(f"WARNING: could not write {config.LIVE_LOG_FILE}: {exc}")
+
             for pid, runtime in runtimes.items():
-                run_cycle(runtime, telemetry, args.mode, servo, logger)
+                run_cycle(runtime, telemetry, args.mode, servo, logger,
+                          live_log_path=config.LIVE_LOG_FILE)
+
+            status = " ".join(
+                f"P{pid}:{'DONE' if rt.state_machine.released else ('READY' if not rt.state_machine.last_block_reasons else f'HOLD({len(rt.state_machine.last_block_reasons)})')}"
+                for pid, rt in runtimes.items()
+            )
+            print(f"\r[{time.strftime('%H:%M:%S')}] cycle={cycle} OK  telemetry={telemetry.get('telemetry_health', 'n/a')}  "
+                  f"{status}  -> {config.LIVE_LOG_FILE}          ", end="", flush=True)
 
             cycle += 1
             elapsed = time.monotonic() - t0
