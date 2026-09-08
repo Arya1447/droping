@@ -140,13 +140,20 @@ else ever reaches stdout (see `_log_append()` in `main.py`). Every
 actual parameter (airspeed, ground speed, altitude, geofence, target
 box, wind, release distance, impact error, the full block-reason
 list, startup/connection/mission-fetch narration, per-cycle summary,
-...) is written instead to `config.LIVE_LOG_FILE` (`droping.log` by
-default), overwritten fresh at the start of every cycle — that file
-gets created the instant the program starts and deleted automatically
-however it exits (normal completion, Ctrl+C, or an error). Watch it
-live in a second terminal:
+...) is written instead to `config.LIVE_LOG_FILE`
+(`/dev/shm/droping.log` by default), overwritten fresh at the start of
+every cycle.
+
+**Never touches disk/SD-card/eMMC**: `/dev/shm` is RAM-backed tmpfs, so
+this file — rewritten 10x/sec for as long as the program runs — costs
+a few KB of RAM only, never persistent-storage write wear. It's
+created the instant the program starts and deleted automatically
+however it exits (normal completion, Ctrl+C, or an error), so nothing
+about it is ever actually "stored" anywhere — it exists only while the
+program is running, purely as a live view. Watch it in a second
+terminal:
 ```bash
-watch -n 0.2 cat droping.log
+watch -n 0.2 cat /dev/shm/droping.log
 ```
 
 `--cycles N` runs N cycles then exits (useful for smoke-testing);

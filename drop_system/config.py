@@ -327,7 +327,21 @@ LOG_CSV_PATH = "drop_system_log.csv"  # CONFIGURED
 # Live human-readable status file (spec-external addition, not a spec
 # section): overwritten fresh at the start of every prediction cycle,
 # then each payload appends its block — so `watch cat droping.log` (or
-# any editor with auto-reload) shows current numbers without the
-# console scrolling. The console itself only prints a compact one-line
-# status per cycle (see main.py).
-LIVE_LOG_FILE = "droping.log"  # CONFIGURED
+# any editor with auto-reload) shows current numbers. The console
+# itself only ever prints one line for the whole run (see main.py).
+#
+# Deliberately placed on /dev/shm (RAM-backed tmpfs), not on disk/SD
+# card/eMMC: this file is rewritten every prediction cycle (10x/sec by
+# default) for as long as the program runs -- on a real block device
+# that's a meaningful, pointless write-wear/IO cost for data that's
+# only ever meant to be glanced at live and is deleted the moment the
+# program exits anyway (see the `finally` block in main()). tmpfs
+# means it never touches persistent storage at all, at the cost of a
+# few KB of RAM only while the program is running -- freed automatically
+# on exit along with the file itself. /dev/shm is standard on virtually
+# every Linux system (verified present on this one: `mount | grep shm`);
+# if it's ever missing on a target machine, writes here just silently
+# fail (main.py's open() calls already swallow OSError, matching the
+# "no console fallback" design) rather than falling back to disk --
+# change this path explicitly if that ever needs to be different.
+LIVE_LOG_FILE = "/dev/shm/droping.log"  # CONFIGURED
