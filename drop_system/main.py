@@ -43,6 +43,21 @@ from wind_model import estimate_wind_vector, wind_speed_direction_from_vector
 GPS_HDG_UNKNOWN = 65535  # MAVLink common.xml: GLOBAL_POSITION_INT.hdg sentinel for "unknown"
 
 
+def _log_append(path: str, text: str) -> None:
+    """Append one line to the live log file instead of printing to the
+    console — main() prints exactly one line to stdout for the whole
+    run ("program droping sudah dijalankan"); every other message
+    (startup narration, warnings, per-cycle status) goes here instead.
+    Silently drops the message on a write failure — there is
+    deliberately no console fallback to report that failure to.
+    """
+    try:
+        with open(path, "a") as f:
+            f.write(text.rstrip("\n") + "\n")
+    except OSError:
+        pass
+
+
 class PayloadRuntime:
     """Everything stateful that must persist across cycles for one
     payload: filters, waypoint latch, stability tracker, state machine.
@@ -111,10 +126,11 @@ def _resolve_waypoint_positions(runtimes: Dict[int, "PayloadRuntime"],
             latlon_to_local(curr_ll[0], curr_ll[1], origin_lat, origin_lon) if curr_ll else None
         )
         if runtime.waypoint_prev_local is None or runtime.waypoint_current_local is None:
-            print(f"WARNING: payload {runtime.payload_id} required_waypoint={req} "
-                  f"not found in the fetched mission (have items {sorted(mission_items)}) — "
-                  "spatial waypoint-passed check will stay False until this is fixed "
-                  "(config.py required_waypoint vs. the uploaded mission likely disagree).")
+            _log_append(config.LIVE_LOG_FILE,
+                        f"WARNING: payload {runtime.payload_id} required_waypoint={req} "
+                        f"not found in the fetched mission (have items {sorted(mission_items)}) — "
+                        "spatial waypoint-passed check will stay False until this is fixed "
+                        "(config.py required_waypoint vs. the uploaded mission likely disagree).")
 
 
 def _maybe_capture_origin(telemetry: Dict) -> Optional[Tuple[float, float]]:
@@ -269,8 +285,10 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
     MAVLink yet this run (LIVE/DRY_RUN only — SIMULATION always has it).
     """
     if "aircraft_lat" not in telemetry or "altitude_m" not in telemetry:
-        print(f"PAYLOAD {runtime.payload_id}: waiting for first GLOBAL_POSITION_INT "
-              "from the flight controller — no aircraft position/altitude yet.")
+        if live_log_path:
+            _log_append(live_log_path,
+                        f"PAYLOAD {runtime.payload_id}: waiting for first GLOBAL_POSITION_INT "
+                        "from the flight controller — no aircraft position/altitude yet.")
         return False
 
     origin_lat = config.LOCAL_ORIGIN_LAT if config.LOCAL_ORIGIN_LAT is not None else telemetry["aircraft_lat"]
@@ -377,7 +395,8 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
             release_commanded = True
             servo_output = record.actual_output
         except ServoFault as exc:
-            print(f"SERVO FAULT (payload {runtime.payload_id}): {exc}")
+            if live_log_path:
+                _log_append(live_log_path, f"SERVO FAULT (payload {runtime.payload_id}): {exc}")
 
     logger.log_cycle(result, servo_output=servo_output, release_commanded=release_commanded,
                       release_verified=release_verified)
@@ -386,8 +405,8 @@ def run_cycle(runtime: PayloadRuntime, telemetry: Dict, mode: str,
         try:
             with open(live_log_path, "a") as f:
                 f.write(_format_payload_detail(runtime, result, waypoint_passed, block_reasons))
-        except OSError as exc:
-            print(f"WARNING: could not write {live_log_path}: {exc}")
+        except OSError:
+            pass  # nowhere left to report a failure writing the log file itself
 
     return True
 
@@ -413,8 +432,10 @@ def main() -> int:
     parser.add_argument("--cycles", type=int, default=0, help="0 = run forever (Ctrl+C to stop)")
     args = parser.parse_args()
 
-    print(f"Starting drop_system in {args.mode} mode "
-          f"(ENABLE_LIVE_RELEASE={config.ENABLE_LIVE_RELEASE})")
+    # The ONLY line this program ever prints to the console. Every
+    # other message (startup narration, warnings, per-cycle status) goes
+    # to config.LIVE_LOG_FILE instead — see _log_append().
+    print("program droping sudah dijalankan")
 
     # Create/reset the live status file immediately, before MAVLink
     # connect/mission-fetch or the GPS-fix wait even begin — otherwise
@@ -422,10 +443,11 @@ def main() -> int:
     # long that takes.
     try:
         with open(config.LIVE_LOG_FILE, "w") as f:
-            f.write(f"drop_system starting in {args.mode} mode — "
+            f.write(f"drop_system starting in {args.mode} mode "
+                    f"(ENABLE_LIVE_RELEASE={config.ENABLE_LIVE_RELEASE}) — "
                     f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-    except OSError as exc:
-        print(f"WARNING: could not write {config.LIVE_LOG_FILE}: {exc}")
+    except OSError:
+        pass
 
     # SIMULATION never needs a locked origin (run_cycle's own per-cycle
     # fallback already handles it). DRY_RUN/LIVE need ONE fixed origin
@@ -438,9 +460,10 @@ def main() -> int:
         config.LOCAL_ORIGIN_LAT is not None and config.LOCAL_ORIGIN_LON is not None
     )
     if not origin_locked:
-        print("config.LOCAL_ORIGIN_LAT/LON not set — will auto-capture from the "
-              "aircraft's own position at the first valid GPS fix. Release stays "
-              "on HOLD (waypoint/target/geofence geometry unavailable) until then.")
+        _log_append(config.LIVE_LOG_FILE,
+                    "config.LOCAL_ORIGIN_LAT/LON not set — will auto-capture from the "
+                    "aircraft's own position at the first valid GPS fix. Release stays "
+                    "on HOLD (waypoint/target/geofence geometry unavailable) until then.")
 
     runtimes = {pid: PayloadRuntime(pid, target) for pid, target in config.TARGETS.items()}
     logger = DropSystemLogger(config.LOG_CSV_PATH)
@@ -454,21 +477,22 @@ def main() -> int:
             mavlink = MAVLinkInterface(config.MAVLINK_CONNECTION_STRING, config.MAVLINK_SOURCE_SYSTEM)
             mavlink.connect()
         except MAVLinkUnavailableError as exc:
-            print(f"MAVLink unavailable: {exc}")
+            _log_append(config.LIVE_LOG_FILE, f"MAVLink unavailable: {exc}")
             return 1
 
-        print("Fetching mission items from the flight controller...")
+        _log_append(config.LIVE_LOG_FILE, "Fetching mission items from the flight controller...")
         try:
             mission_items = mavlink.fetch_mission_items()
-            print(f"Fetched {len(mission_items)} mission items: {sorted(mission_items)}")
+            _log_append(config.LIVE_LOG_FILE, f"Fetched {len(mission_items)} mission items: {sorted(mission_items)}")
         except MAVLinkUnavailableError as exc:
-            print(f"WARNING: could not fetch mission items ({exc}); "
-                  "waypoint-passed will stay False until this is retried.")
+            _log_append(config.LIVE_LOG_FILE,
+                        f"WARNING: could not fetch mission items ({exc}); "
+                        "waypoint-passed will stay False until this is retried.")
             mission_items = {}
         if origin_locked:
             _resolve_waypoint_positions(runtimes, mission_items, config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON)
         else:
-            print("Waypoint positions will be resolved once the local origin is captured.")
+            _log_append(config.LIVE_LOG_FILE, "Waypoint positions will be resolved once the local origin is captured.")
 
         # Each payload's expected SERVOx_FUNCTION is configured
         # independently in config.py (default UNKNOWN -> mapping stays
@@ -506,13 +530,11 @@ def main() -> int:
                 if captured is not None:
                     config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON = captured
                     origin_locked = True
-                    print(f"LOCAL ORIGIN CAPTURED (source=AUTO_FIRST_GPS_FIX): "
-                          f"lat={config.LOCAL_ORIGIN_LAT:.7f}, lon={config.LOCAL_ORIGIN_LON:.7f}")
+                    _log_append(config.LIVE_LOG_FILE,
+                                f"LOCAL ORIGIN CAPTURED (source=AUTO_FIRST_GPS_FIX): "
+                                f"lat={config.LOCAL_ORIGIN_LAT:.7f}, lon={config.LOCAL_ORIGIN_LON:.7f}")
                     _resolve_waypoint_positions(runtimes, mission_items, config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON)
                 else:
-                    print(f"\r[{time.strftime('%H:%M:%S')}] cycle={cycle} HOLD: waiting for a "
-                          "valid GPS fix to establish local origin — release blocked."
-                          "          ", end="", flush=True)
                     try:
                         with open(config.LIVE_LOG_FILE, "w") as f:
                             f.write(
@@ -526,23 +548,24 @@ def main() -> int:
                                 f"aircraft_lat={telemetry.get('aircraft_lat', 'N/A')}  "
                                 f"aircraft_lon={telemetry.get('aircraft_lon', 'N/A')}\n"
                             )
-                    except OSError as exc:
-                        print(f"WARNING: could not write {config.LIVE_LOG_FILE}: {exc}")
+                    except OSError:
+                        pass
                     cycle += 1
                     elapsed = time.monotonic() - t0
                     time.sleep(max(0.0, period_s - elapsed))
                     continue
 
             # Fresh snapshot each cycle: truncate + header, then each
-            # run_cycle() call below appends its payload's block. Full
-            # numbers live here, not on the console (see module
-            # docstring / config.LIVE_LOG_FILE).
+            # run_cycle() call below appends its payload's block. This
+            # file is the ONLY place per-cycle numbers/status appear —
+            # the console stays silent after the one startup line.
             try:
                 with open(config.LIVE_LOG_FILE, "w") as f:
                     f.write(f"drop_system live status — {time.strftime('%Y-%m-%d %H:%M:%S')} "
-                            f"— cycle {cycle} — mode={args.mode}\n\n")
-            except OSError as exc:
-                print(f"WARNING: could not write {config.LIVE_LOG_FILE}: {exc}")
+                            f"— cycle {cycle} — mode={args.mode} — "
+                            f"telemetry={telemetry.get('telemetry_health', 'n/a')}\n\n")
+            except OSError:
+                pass
 
             for pid, runtime in runtimes.items():
                 run_cycle(runtime, telemetry, args.mode, servo, logger,
@@ -552,14 +575,13 @@ def main() -> int:
                 f"P{pid}:{'DONE' if rt.state_machine.released else ('READY' if not rt.state_machine.last_block_reasons else f'HOLD({len(rt.state_machine.last_block_reasons)})')}"
                 for pid, rt in runtimes.items()
             )
-            print(f"\r[{time.strftime('%H:%M:%S')}] cycle={cycle} OK  telemetry={telemetry.get('telemetry_health', 'n/a')}  "
-                  f"{status}  -> {config.LIVE_LOG_FILE}          ", end="", flush=True)
+            _log_append(config.LIVE_LOG_FILE, f"--- summary: {status} ---")
 
             cycle += 1
             elapsed = time.monotonic() - t0
             time.sleep(max(0.0, period_s - elapsed))
     except KeyboardInterrupt:
-        print("\nStopped (Ctrl+C)")
+        pass
     finally:
         # droping.log is a live-status snapshot only, not a record worth
         # keeping between runs (unlike config.LOG_CSV_PATH, the actual
@@ -568,10 +590,8 @@ def main() -> int:
         # exits: normal --cycles completion, Ctrl+C, or an error.
         try:
             os.remove(config.LIVE_LOG_FILE)
-        except FileNotFoundError:
+        except OSError:
             pass
-        except OSError as exc:
-            print(f"WARNING: could not remove {config.LIVE_LOG_FILE}: {exc}")
 
     return 0
 

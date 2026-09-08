@@ -1,15 +1,17 @@
 """Verifies run_cycle() no longer prints the full per-payload parameter
 dump to stdout, and instead writes it to a live status file
-(config.LIVE_LOG_FILE) when a path is given -- console output stays a
-compact single-line status (built by main()'s loop itself, not
-run_cycle()), so a running LIVE/DRY_RUN session doesn't spam dozens of
-lines per cycle while every parameter is still visible in real time in
-that file.
+(config.LIVE_LOG_FILE) when a path is given -- and that main() itself
+prints exactly one line ("program droping sudah dijalankan") for an
+entire run, no matter how many cycles execute, with every actual
+parameter/warning/status routed to that file instead via
+main._log_append().
 """
+
+import sys
 
 import config
 from logger import DropSystemLogger
-from main import PayloadRuntime, run_cycle
+from main import PayloadRuntime, main as main_entrypoint, run_cycle
 from servo_controller import FakeServoController
 
 
@@ -69,3 +71,21 @@ def test_live_log_file_is_appended_within_one_cycle_not_overwritten_per_payload(
     content = live_log.read_text()
     assert "=== PAYLOAD 1 ===" in content
     assert "=== PAYLOAD 2 ===" in content
+
+
+def test_main_prints_exactly_one_line_for_the_whole_run(monkeypatch, tmp_path, capsys):
+    """End-to-end: main() itself, not just run_cycle(), must never print
+    anything beyond the single startup line -- regardless of how many
+    cycles execute or what happens during them.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--mode", "SIMULATION", "--cycles", "5"])
+
+    exit_code = main_entrypoint()
+
+    assert exit_code == 0
+    out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert out_lines == ["program droping sudah dijalankan"]
+    # droping.log is deleted on exit -- the whole run happened silently
+    # except for that one line, with everything else having gone there.
+    assert not (tmp_path / config.LIVE_LOG_FILE).exists()
