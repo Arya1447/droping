@@ -1,10 +1,10 @@
 """Verifies run_cycle() no longer prints the full per-payload parameter
 dump to stdout, and instead writes it to a live status file
 (config.LIVE_LOG_FILE) when a path is given -- and that main() itself
-prints exactly one line ("program droping sudah dijalankan") for an
-entire run, no matter how many cycles execute, with every actual
-parameter/warning/status routed to that file instead via
-main._log_append().
+prints exactly one line ("program berjalan") for an entire run, and
+only once real data is actually flowing (origin_locked), no matter how
+many cycles execute, with every other message/parameter/warning routed
+to that file instead via main._log_append().
 """
 
 import sys
@@ -85,7 +85,7 @@ def test_main_prints_exactly_one_line_for_the_whole_run(monkeypatch, tmp_path, c
 
     assert exit_code == 0
     out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
-    assert out_lines == ["program droping sudah dijalankan"]
+    assert out_lines == ["program berjalan"]
     # droping.log is deleted on exit -- the whole run happened silently
     # except for that one line, with everything else having gone there.
     assert not (tmp_path / config.LIVE_LOG_FILE).exists()

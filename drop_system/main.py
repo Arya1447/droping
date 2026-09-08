@@ -432,10 +432,13 @@ def main() -> int:
     parser.add_argument("--cycles", type=int, default=0, help="0 = run forever (Ctrl+C to stop)")
     args = parser.parse_args()
 
-    # The ONLY line this program ever prints to the console. Every
-    # other message (startup narration, warnings, per-cycle status) goes
-    # to config.LIVE_LOG_FILE instead — see _log_append().
-    print("program droping sudah dijalankan")
+    # Nothing prints at startup — the ONLY line this program ever prints
+    # to the console is "program berjalan", and only once real data is
+    # actually flowing (origin_locked becomes True: immediately for
+    # SIMULATION/a manually-configured origin, or the moment the first
+    # valid GPS fix arrives otherwise — see the two print sites below).
+    # Every other message (startup narration, warnings, per-cycle
+    # status) goes to config.LIVE_LOG_FILE instead — see _log_append().
 
     # Create/reset the live status file immediately, before MAVLink
     # connect/mission-fetch or the GPS-fix wait even begin — otherwise
@@ -459,7 +462,9 @@ def main() -> int:
     origin_locked = args.mode == "SIMULATION" or (
         config.LOCAL_ORIGIN_LAT is not None and config.LOCAL_ORIGIN_LON is not None
     )
-    if not origin_locked:
+    if origin_locked:
+        print("program berjalan")
+    else:
         _log_append(config.LIVE_LOG_FILE,
                     "config.LOCAL_ORIGIN_LAT/LON not set — will auto-capture from the "
                     "aircraft's own position at the first valid GPS fix. Release stays "
@@ -530,6 +535,7 @@ def main() -> int:
                 if captured is not None:
                     config.LOCAL_ORIGIN_LAT, config.LOCAL_ORIGIN_LON = captured
                     origin_locked = True
+                    print("program berjalan")
                     _log_append(config.LIVE_LOG_FILE,
                                 f"LOCAL ORIGIN CAPTURED (source=AUTO_FIRST_GPS_FIX): "
                                 f"lat={config.LOCAL_ORIGIN_LAT:.7f}, lon={config.LOCAL_ORIGIN_LON:.7f}")

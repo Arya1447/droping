@@ -134,15 +134,21 @@ python3 -m venv .venv               # one-time setup
 .venv/bin/python main.py --mode LIVE               # ALSO needs config.ENABLE_LIVE_RELEASE = True
 ```
 
-**Console output is exactly one line for the whole run**:
-`program droping sudah dijalankan`, printed once at startup — nothing
-else ever reaches stdout (see `_log_append()` in `main.py`). Every
-actual parameter (airspeed, ground speed, altitude, geofence, target
-box, wind, release distance, impact error, the full block-reason
-list, startup/connection/mission-fetch narration, per-cycle summary,
-...) is written instead to `config.LIVE_LOG_FILE`
-(`/dev/shm/droping.log` by default), overwritten fresh at the start of
-every cycle.
+**Console output is exactly one line, and only once real data is
+flowing**: `program berjalan`, printed the moment the local origin is
+established — immediately for `SIMULATION` or a manually-configured
+`LOCAL_ORIGIN_LAT`/`LON`, or the moment the aircraft's first valid GPS
+fix arrives otherwise (see "auto-capture" below). Before that point —
+including MAVLink connecting, fetching the mission, or sitting on
+`HOLD` waiting for GPS — the console prints **nothing at all**, not
+even errors (e.g. `MAVLinkUnavailableError` if the flight controller
+isn't reachable); the exit code (`0` success, `1` failure) is the only
+externally-visible signal until that first line. Every actual
+parameter (airspeed, ground speed, altitude, geofence, target box,
+wind, release distance, impact error, the full block-reason list,
+startup/connection/mission-fetch narration, per-cycle summary, ...) is
+written instead to `config.LIVE_LOG_FILE` (`/dev/shm/droping.log` by
+default), overwritten fresh at the start of every cycle.
 
 **Never touches disk/SD-card/eMMC**: `/dev/shm` is RAM-backed tmpfs, so
 this file — rewritten 10x/sec for as long as the program runs — costs
