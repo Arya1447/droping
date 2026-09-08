@@ -206,7 +206,7 @@ TARGET_1 = {
         "west_m": 3.0,
     },
     "required_waypoint": 6,  # CONFIGURED, per spec section 33/156
-    "servo_channel": 7,      # CONFIGURED
+    "servo_channel": 6,      # CONFIGURED
     "release_pwm": 2100,     # CONFIGURED
     "max_cross_track_error_m": 7.0,  # CONFIGURED flight corridor
     # Geofence for THIS payload's drop run only (payload 1 and payload 2
@@ -248,7 +248,7 @@ TARGET_2 = {
         "west_m": 3.0,
     },
     "required_waypoint": 8,  # CONFIGURED placeholder - confirm real mission seq
-    "servo_channel": 8,      # CONFIGURED
+    "servo_channel": 7,      # CONFIGURED
     "release_pwm": 2100,     # CONFIGURED
     "max_cross_track_error_m": 10.0,
     # !!! PLACEHOLDER / EXAMPLE ONLY !!! — see TARGET_1["geofence"]

@@ -12,6 +12,104 @@ guessing.
 runs a different (vision-trigger) drop architecture. Nothing here
 modifies that repository.
 
+## Handoff notes — read this first if you're picking this up cold
+
+This is a **point-in-time snapshot** (last updated 2026-09-05) from
+hands-on debugging against the real hardware (Orange Pi 4 Pro
+companion computer, CUAV X7 flight controller, ArduPilot Plane 4.7.0,
+`/dev/ttyACM0`). Everything below was true when written — **verify
+against the live system before trusting it**, especially anything
+GPS/hardware-related; don't assume it's still accurate just because
+it's in this file (same anti-hallucination discipline as the rest of
+this project applies to this section too).
+
+**Code status**: complete and tested (86/86 `pytest` passing), all
+committed and pushed to `origin/main` on GitHub. The physics,
+state-machine, telemetry, geofence, and safety-gate logic are done and
+verified against real MAVLink telemetry from the FC — see sections
+below for how each piece works. What's *not* done is filling in
+real-world mission data (next section) and confirming servo hardware
+mapping.
+
+**What's blocking real operation right now, in order:**
+
+1. **GPS has no fix.** Every check this session read `fix_type=0` or
+   `1` (NO_GPS/NO_FIX), 0 satellites visible, even after extended
+   waiting. Untested whether this is "needs outdoor sky view" or a
+   hardware/antenna problem — hasn't been taken outside yet as of this
+   writing. Nothing past this point can be verified with real data
+   until it's resolved. Check live with:
+   ```bash
+   cd drop_system && ../.venv/bin/python -c "
+   import sys, time; sys.path.insert(0,'.')
+   from mavlink_interface import MAVLinkInterface
+   m = MAVLinkInterface('udp:127.0.0.1:14556', 255); m.connect(timeout_s=8)
+   [m.poll(blocking=False) or time.sleep(0.01) for _ in range(1)]
+   time.sleep(3)
+   g = m.get_latest('GPS_RAW_INT')
+   print(g.msg.fix_type, g.msg.satellites_visible) if g else print('no GPS_RAW_INT')
+   "
+   ```
+2. **`config.LOCAL_ORIGIN_LAT`/`LON`, `TARGET_1`/`TARGET_2` `lat`/`lon`,
+   and each target's `geofence`** are still placeholders (`None` or
+   obviously-fake round-number coordinates around -6.90/-6.902,
+   107.60x — see the `!!! PLACEHOLDER / EXAMPLE ONLY !!!` comments in
+   `config.py`). `LOCAL_ORIGIN` auto-captures itself from the
+   aircraft's first GPS fix (see "Quick start"), but target
+   coordinates and geofences need real survey data or committee-
+   provided coordinates — they will never fill themselves in.
+3. **Servo channel mapping — a real finding from live hardware testing,
+   not a guess**: sending a real `MAV_CMD_DO_SET_SERVO` to channel 7
+   was `ACCEPTED` (result=0) and the output actually moved. The same
+   command to channel 8 came back `FAILED` (result=4) and the output
+   never changed — channel 8 most likely already has an incompatible
+   `SERVOx_FUNCTION` assigned in ArduPilot's params, rejecting direct
+   override. In response, `config.py`'s `servo_channel` assignments
+   were changed from the original 7/8 to **6/7** (TARGET_1→6,
+   TARGET_2→7) — channel 6 has **not** been tested the same way; only
+   channel 7's acceptance is actually confirmed. Before relying on
+   this, re-run the same accept/reject test against whatever channels
+   `config.py` currently points at, and check `SERVO6_FUNCTION`/
+   `SERVO7_FUNCTION`/`SERVO8_FUNCTION` in QGroundControl/Mission
+   Planner to understand *why* one channel accepts direct servo
+   commands and another doesn't, rather than only trial-and-error
+   swapping channel numbers.
+4. **`SERVO_1_EXPECTED_FUNCTION`/`SERVO_2_EXPECTED_FUNCTION`** are
+   still `None` — until set to the real confirmed function ID for
+   whichever channels end up used, `servo_mapping_valid` stays `False`
+   and release stays blocked (by design, spec section 45/158).
+5. **Mission content on the FC has been changing across this session**
+   (item count observed as both 6 and 11 at different points, with at
+   least one non-navigation item at `(0,0)` — likely a `DO_*` command,
+   not a real waypoint). `TARGET_1["required_waypoint"] = 6` was
+   observed to NOT exist in a mission that only had items 0-5 at one
+   point. Don't assume the configured `required_waypoint` values match
+   whatever mission happens to be uploaded right now — re-fetch and
+   check (`MAVLinkInterface.fetch_mission_items()`) before relying on
+   waypoint-passed logic.
+
+**Infrastructure fixed this session (in the sibling
+`krti-flight-software` repo, not committed by this agent — check its
+own `git log`/`git status`)**: `mavlink-supervisor.service` was
+crash-looping (missing `HOME` env var breaking MAVProxy's signing-key
+path lookup — fixed via `Environment=HOME=/root` in the systemd unit)
+and, separately, port 14551 had been reassigned away from the
+supervisor's own heartbeat watchdog, causing it to kill a healthy
+MAVProxy every ~6s (restored, plus a new dedicated port 14556 added
+for this project). **Known remaining issue, left alone by explicit
+operator choice**: MAVProxy still restarts roughly every ~20s, traced
+to two `--out` targets in `find_mavlink.py` pointing at Tailscale IPs
+while Tailscale is logged out on this machine (`tailscale up` would
+fix it). `drop_system` handles this gracefully (telemetry_health
+flips CRITICAL briefly, release blocks, recovers on its own) but it's
+worth knowing the cause if debugging telemetry gaps.
+
+**If you're an AI picking this up**: don't re-derive the above through
+another multi-hour debugging session — verify the specific claim you
+need (a live check like the GPS one above takes seconds), trust the
+rest, and update this section when something material changes so the
+next reader isn't starting from zero either.
+
 ## Quick start — how to actually run this
 
 **Nothing here starts automatically.** `main.py` is a foreground
